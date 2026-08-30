@@ -152,3 +152,65 @@ Expect the crypto routes to need one change: `Deno.env` has no Vercel equivalent
 Supabase module reads config through `env()`/`globalThis.env` in the first place. Then verify with
 `tools/verify-crypto.js` and `tools/verify-crypto-ui.js`, both of which are deployment-agnostic
 apart from the base URL in `$F`.
+
+WHAT THE RUNTIME ACTUALLY LOOKS LIKE
+====================================
+
+Three facts, each of which cost a failed production deploy, that no amount of reading api/index.js
+would have told you. If you change how the gate loads, all three apply.
+
+1. A Vercel function is NOT the repository. @vercel/node emits an artifact from the entry point plus
+   whatever it can TRACE through require/import. At runtime `__dirname` is `/var/task` and there is no
+   `deploy/` directory beside it — so `fs.readFileSync(path.join(__dirname, '..', 'deploy', ...))`
+   throws, and every path the rewrite routes through the function answers 500
+   FUNCTION_INVOCATION_FAILED. That includes `/unlock` and every paid page, i.e. the site looks
+   "half up" (static HTML serves) while nobody can buy or sign in.
+
+   Two consequences, both now encoded in the code rather than in memory:
+     - the gate is reached through `api/gate-bundled.js`, a literal
+       `export { onRequest } from '../deploy/cloudflare-pages-function.js'` the builder inlines. An
+       `await import()` of a path string is NOT visible to it, and a sibling file you added for the
+       import to find is an input, not an output, so it is not there at runtime either.
+     - the two bodies a reply needs (the 402 lock screen, the 404 page) are EMBEDDED in api/_gate.js,
+       generated from `deploy/gate-fallback.html` and `404.html` by `tools/embed-fallbacks.js`. The
+       files are still preferred when present, so dev and Cloudflare read them from disk. After editing
+       either one: `node tools/embed-fallbacks.js` — the suite fails if they drift.
+
+2. `readyState: ERROR` on a deployment and a 19 KB Vercel-branded page for EVERY path (including ones
+   that do not exist) are the same event seen from the API and the browser. A deployment nobody has
+   claimed shows that page, and a build that failed looks identical from curl. Check
+   `GET /v13/deployments/<url>` before believing a routing bug: `builds[].readyState` can be READY
+   while the deployment is ERROR.
+
+3. `.vercelignore` prunes the static output, it does not hide repo files. Verified on a live deploy:
+   `task.html`/`queue.html`/`gate.html` were absent and public pages served, while `js/tasks.js`,
+   `vercel.json` and `*.md` returned 500 because they were never in the output and fell through to the
+   (then broken) function. Absence plus a broken function is still closed — no paid bytes reached a
+   browser — but it is a 500 where the visitor should have seen a lock screen, which is why fix 1
+   matters more than the ignore file.
+
+DIAGNOSING WITHOUT THE DASHBOARD
+================================
+
+`tools/vprobe.js` deploys three shapes into the project (no-op handler / the gate set / the repo minus
+.vercelignore) so "does Vercel run my function at all" is answerable from the CLI. A project-scoped
+`vcp_` token can read `GET /v9/projects`, `GET /v6/deployments`, `GET /v13/deployments/<id>`,
+`POST /v10/projects/<id>/env` and `POST /v13/deployments`, and can PATCH project settings — enough to
+remove `ssoProtection`, which had been making every request from a browser that was not logged into
+that team redirect to `vercel.com/sso-api` and look like a dead deployment. It cannot read runtime logs
+(`/{v2,v3}/deployments/<id>/{files,logs}` → 404), so behaviour is the only instrument:
+
+    D=https://<your-production-domain>
+    for p in "" index.html platforms.html task.html queue.html js/tasks.js data/tasks.json api/health; do
+      printf '%-18s %s\n' "/$p" "$(curl -s -o /dev/null -w '%{http_code}' $D/$p)"
+    done
+    curl -s -X POST -H 'content-type: application/json' -d '{"key":"nope"}' $D/unlock
+
+Expected: 200 for the free pages, 402 for every paid one (HTML = the lock screen, JS = a stub),
+`{"ok":true,...}` or `{"error":"Key format not recognised."}` from /unlock, and `{"ok":true,"gate":"on"...}`
+from /api/health. 500 with a JSON `Gate failed...` body means the gate did not load (fix 1); 200 on
+`task.html` means `.vercelignore` regressed and the paid corpus is public.
+
+`tests/edge-function.js` needs `node --experimental-vm-modules` when run on its own (verify.js passes
+it); without the flag one check reports `vm.SourceTextModule is not a constructor` and nothing else
+runs.

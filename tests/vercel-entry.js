@@ -13,7 +13,12 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
-const ROOT = path.join(__dirname, '..');
+// In --no-fallback mode the parent hands us a scratch tree to stand in for a bundled runtime, and ROOT
+// must move with it: the handler resolves its files from here, and an un-redirected ROOT made the first
+// version of that check delete the real deploy/gate-fallback.html from the working tree.
+const ROOT = process.argv.indexOf('--no-fallback') >= 0
+  ? (process.argv[process.argv.indexOf('--no-fallback') + 1] || path.join(__dirname, '..'))
+  : path.join(__dirname, '..');
 let pass = 0; const fails = [];
 const need = (c, name, note) => { if (c) { pass++; console.log('   \u2713 ' + name); } else { fails.push(name + (note ? '  - ' + note : '')); console.log('   \u2717 ' + name + (note ? '  - ' + String(note).slice(0, 120) : '')); } };
 
@@ -65,6 +70,39 @@ const get = (p, opts) => new Promise((resolve, reject) => {
 
 (async () => {
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
+
+
+  // This file's whole reason to exist is catching what only a REAL deploy shows. The last such bug:
+  // Vercel's function artifact is the traced import graph, so /var/task has no deploy/ directory and the
+  // 402 body read threw ENOENT — a 500 to the one visitor who should have seen a lock screen and a buy
+  // link. So: run the handler again over a copy with the fallback files deleted, which is the bundle's
+  // actual shape, and assert the embedded copies answer instead.
+  if (process.argv.indexOf('--no-fallback') >= 0) {
+    // ROOT is redirected to the scratch copy the parent hands us: deleting inside the real working tree
+    // to simulate a bundle would have been the second-worst way to find this bug. (The first attempt
+    // did exactly that, and `git checkout` put the file back.)
+    const BUNDLE = ROOT;
+    const gone = [];
+    for (const f of ['deploy/gate-fallback.html', '404.html', 'gate.html']) {
+      const abs = path.join(BUNDLE, f);
+      if (fs.existsSync(abs)) { fs.rmSync(abs); gone.push(f); }
+    }
+    need(gone.length >= 2, 'fixture: the fallback files really are absent from this copy', gone.join(','));
+    let x = await get('/task.html');
+    need(x.status === 402 && /placeholder=/i.test(x.body) && /Unlock/i.test(x.body) && /<form|<button/i.test(x.body),
+      'PROTECTED page still renders the full lock screen with no deploy/gate-fallback.html on disk',
+      x.status + ' ' + x.body.slice(0, 90));
+    need(x.status === 402 && !/ENOENT/.test(x.body), 'no ENOENT leak from the missing file', x.body.slice(0, 90));
+    x = await get('/nothing-at-all-here');
+    need(x.status === 404 && /<!DOCTYPE html>/i.test(x.body) && x.body.length > 200,
+      'unknown path still gets the styled 404 from the embedded copy, not "not found"',
+      x.status + ' ' + x.body.length + 'B ' + x.body.slice(0, 40));
+    server.close();
+    console.log('\n' + '='.repeat(56));
+    if (fails.length) { fails.forEach((f2) => console.log('   - ' + f2)); console.log('\u2717 no-fallback: ' + fails.length + ' failure(s)'); process.exit(1); }
+    console.log('\u2713 no-fallback: the embedded bodies carry the lock screen and the 404 (3 checks)');
+    return;
+  }
 
   console.log('\n\u250c\u2500 the Vercel entry point (api/index.js, loaded for real)');
   let r = await get('/index.html');
@@ -190,7 +228,27 @@ const get = (p, opts) => new Promise((resolve, reject) => {
     'the paid corpus is genuinely ABSENT from the deployment (this is the gate, not a rewrite)', 'still present');
   need(fsx.existsSync(path.join(dir, 'deploy/gate-fallback.html')),
     'the 402 body ships in deploy/, so it survives the exclusion of gate.html', 'fallback missing');
+  // And the same handler over a copy stripped of the fallback files — the bundle's true shape.
+  const dir3 = path.join(os.tmpdir(), 'vercel-bundle-' + Date.now().toString(36));
+  require('child_process').execSync('cp -R ' + JSON.stringify(dir) + ' ' + JSON.stringify(dir3));
+  const c3 = require('child_process').spawn(process.execPath, [__filename, '--no-fallback', dir3],
+    { cwd: ROOT, env: Object.assign({}, process.env, { ANNOTATE_DEPLOY_ROOT: dir3 }), encoding: 'utf8', timeout: 90000 });
+  let o3 = ''; c3.stdout.on('data', (d) => { o3 += d; }); const e3 = []; c3.stderr.on('data', (d) => e3.push(d));
+  const code3 = await new Promise((rr) => c3.on('exit', rr));
+  const gre3 = (o3.match(/\u2713/g) || []).length;
+  need(code3 === 0, 'with NO fallback files on disk (bundled-runtime shape) the gate still answers 402 + 404',
+    gre3 + ' green; ' + (o3.split('\n').filter((l) => /\u2717|failure/.test(l)).slice(0, 2).join(' | ') || e3.join('').slice(0, 160)).slice(0, 220));
+  need(/no-fallback: the embedded bodies/.test(o3), 'that pass actually ran the three embedded-body checks', o3.slice(-80));
+  require('fs').rmSync(dir3, { recursive: true, force: true });
+
+  const emb = fs.readFileSync(path.join(ROOT, 'api/_gate.js'), 'utf8');
+  const gsrc = fs.readFileSync(path.join(ROOT, 'deploy/gate-fallback.html'), 'utf8').replace(/\n$/, '');
+  need(emb.indexOf('const EMBED_GATE = `' + gsrc + '`;') >= 0,
+    'the embedded lock screen is byte-identical to deploy/gate-fallback.html (run tools/embed-fallbacks.js)');
+
   fsx.rmSync(dir, { recursive: true, force: true });
+
+
 
   // Static drift guard, and the actual cause of the failed production deploy this file exists to
   // prevent. Vercel emits a function artifact from api/index.js plus what it can TRACE through

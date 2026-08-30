@@ -88,6 +88,72 @@ const PROTECTED = /^\/(?:task|queue|onboarding|detector|trust-safety|earnings)\.
 // The paid corpus, served as an empty stub instead of the real file — the same choice the Supabase and
 // Cloudflare variants make. Kept inline because the real file is NOT DEPLOYED (see .vercelignore), so
 // there is nothing on disk to withhold here.
+/* The two bodies a Vercel request needs but the deployment does not carry, embedded verbatim.
+   deploy/gate-fallback.html and 404.html exist in the repo, yet Vercel's function artifact is the traced
+   import graph — __dirname is /var/task and there is no deploy/ beside it, so reading either file at
+   runtime throws ENOENT inside the handler. That is how a working paywall ended up answering
+   `500 {"error":"Gate failed closed: ENOENT …gate-fallback.html"}` to the very visitor who should be
+   shown the lock screen and a buy link.
+
+   The file remains the source of truth (dev and Cloudflare read it from disk, preferring it when it
+   exists, so an edit there is live locally); tools/embed-fallbacks.js regenerates these two constants
+   from it, and tests/vercel-entry.js fails if they drift. */
+const EMBED_GATE = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Locked · AnnotateTrainer</title>
+<style>
+:root{color-scheme:dark}
+body{background:#0b0d12;color:#e7ecf3;font:15px/1.6 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+display:grid;place-items:center;min-height:100vh;margin:0;padding:24px;box-sizing:border-box}
+.card{max-width:520px;background:#141922;border:1px solid #232b39;border-radius:14px;padding:28px}
+.up{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#6d7c92;font-weight:700}
+h1{font-size:21px;margin:8px 0}
+p{color:#93a0b4;font-size:13.5px}
+input{width:100%;box-sizing:border-box;background:#0e131c;border:1px solid #2e3848;color:#e7ecf3;border-radius:9px;padding:11px 13px;font-family:ui-monospace,monospace;font-size:13px}
+button{background:#6a5bf0;border:1px solid #7f70ff;color:#fff;border-radius:9px;padding:11px 17px;font-weight:700;cursor:pointer}
+.row{display:flex;gap:8px;margin-top:12px}
+a{color:#8b7cff}
+#m{font-size:12px;min-height:18px;color:#6d7c92}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="up">Locked</div>
+  <h1>This practice platform is paid-access</h1>
+  <p>Paste the key from your receipt. The platform catalogue and the guide stay free.</p>
+  <div class="row"><input id="k" placeholder="Ab3xK9.7W7KqRmYs0dYbE6fLrT1cPp0.1790000000000"><button id="go">Unlock</button></div>
+  <p id="m"></p>
+  <p><a href="/buy.html">Pricing</a> · pay by transfer or one-time Litecoin</p>
+</div>
+<script>
+var go=function(){var k=document.getElementById('k').value.trim();var m=document.getElementById('m');
+m.textContent='checking\u2026';
+fetch('/unlock',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({key:k})})
+.then(function(r){return r.json().then(function(j){return{c:r.status,j:j}})})
+.then(function(r){m.style.color=r.c===200?'#57d38b':'#ff6b6b';
+m.textContent=r.c===200?('Accepted - '+(r.j.label||'')+', valid until '+(r.j.until||'')):(r.j.error||'Key rejected.');
+if(r.c===200)setTimeout(function(){location.reload()},700);});};
+document.getElementById('go').onclick=go;
+document.getElementById('k').addEventListener('keydown',function(e){if(e.key==='Enter')go();});
+</script>
+</body>
+</html>`;
+const EMBED_404 = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Not found — AnnotateTrainer</title><link rel="stylesheet" href="css/app.css"></head>
+<body><div id="app-banner"></div>
+<div class="wrap" style="padding-top:90px;text-align:center">
+  <div class="mono" style="font-size:60px;color:var(--violet)">404</div>
+  <h1>That task was released from the queue.</h1>
+  <p class="dim">Nothing at that path. Which is, coincidentally, the exact experience of a platform going quiet.</p>
+  <div class="row" style="justify-content:center"><a class="btn" href="index.html">Home</a><a class="btn ghost" href="queue.html">Task queue</a></div>
+</div>
+<script src="js/storage.js"></script><script src="js/app.js"></script><script>App.banner();</script>
+</body></html>`;
+
 const STUB_JS = {
   '/js/tasks.js': 'window.Tasks={list:function(){return[]},get:function(){return null},count:0};window.POLICY={};',
   '/js/detector.js': 'window.Detector={analyze:function(){return{index:null,locked:true,features:[],tips:[]}}};'
@@ -117,13 +183,14 @@ async function nextHandler(request) {
     if (/\.js$/.test(rel)) {
       return { status: 402, body: Buffer.from(STUB_JS[rel] || 'window.__locked=true;'), type: TYPES['.js'], cache: 'no-store' };
     }
+    // Prefer the deployed copy (dev, Cloudflare); on Vercel it is not in the artifact, hence EMBED_GATE.
     const g = path.join(ROOT, 'deploy/gate-fallback.html');
-    const body = fs.existsSync(g) ? fs.readFileSync(g) : Buffer.from('<!DOCTYPE html><title>Locked</title><p>Paid access required.</p>');
+    const body = fs.existsSync(g) ? fs.readFileSync(g) : Buffer.from(EMBED_GATE);
     return { status: 402, body, type: TYPES['.html'], cache: 'no-store' };
   }
   if (!file) {
     const nf = path.join(ROOT, '404.html');
-    return { status: 404, body: fs.existsSync(nf) ? fs.readFileSync(nf) : Buffer.from('not found'), type: TYPES['.html'] };
+    return { status: 404, body: fs.existsSync(nf) ? fs.readFileSync(nf) : Buffer.from(EMBED_404), type: TYPES['.html'] };
   }
   const served = '/' + path.relative(ROOT, file).split(path.sep).join('/');
   // Deliberately the same rule as the Supabase function, which is deliberately narrow: the first draft
@@ -155,7 +222,7 @@ function makeFetch(baseOrigin) {
       // exactly what a crawler should NOT index as a free page. So a missing one is expected, not an
       // error: fall back to the shipped copy instead of handing the caller a 404 body to wrap in a 402.
       const out = (u.pathname === '/gate.html' && r.status === 404)
-        ? { status: 200, body: fs.readFileSync(path.join(ROOT, 'deploy/gate-fallback.html')), type: TYPES['.html'] }
+        ? { status: 200, body: fs.existsSync(path.join(ROOT, 'deploy/gate-fallback.html')) ? fs.readFileSync(path.join(ROOT, 'deploy/gate-fallback.html')) : Buffer.from(EMBED_GATE), type: TYPES['.html'] }
         : r;
       return new Response(out.body, { status: out.status, headers: { 'content-type': out.type, 'cache-control': out.cache || 'no-store' } });
     }
