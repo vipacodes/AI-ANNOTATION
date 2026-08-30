@@ -83,7 +83,7 @@ ANNOTATE_SECRET=$(node tools/keygen.js secret) PORT=4173 node server.js
 
 ---
 
-## C · Payments → automatic key delivery — already built, needs two secrets
+## C · Paying by transfer (Paystack / Flutterwave) → automatic key delivery — already built, needs two secrets
 
 The edge function serves `POST /fulfill`, which takes a payment reference and returns a key:
 
@@ -113,7 +113,7 @@ provider's webhook at the same `/fulfill` route if you would rather keys arrive 
 `{ref, plan}` is the whole contract. Until `PAY_SECRET_KEY` is set, `node tools/keygen.js new
 --sql` (or `key_mint` with `MINT_SECRET`) issues keys by hand; the gate itself is live either way.
 
-## C · Payments → automatic key delivery
+## C2 · Choosing a fiat processor
 
 **Take the money (Nigeria-first):**
 | Want | Use | Why |
@@ -149,6 +149,62 @@ Then wire `buy.html`: set `CHECKOUT.ngn` / `CHECKOUT.usd` at the bottom of the f
 are already wired to read those two constants.
 
 ---
+
+## D · Paying in Litecoin — no provider account, no email, no human in the loop
+
+Buyers send LTC to **your own address**. The site notices the exact amount on-chain and mints the key.
+`buy.html` has the panel; the edge function serves three routes and one readout:
+
+    POST /crypto/quote   {"plan":"season","email":"optional"}   → {id, token, amount, address, pay, expires_in}
+    POST /crypto/status  {"id":"q1","token":"…"}                → waiting | seen | paid(+key)
+    POST /crypto/claim   {"id":"…","token":"…","txid":"…"}      → same, but driven by a pasted txid
+    GET  /crypto/check                                           → is any of this usable right now?
+
+**One setting turns it on** — the SQL editor, no redeploy:
+
+    insert into public.app_config (key, value) values
+      ('LTC_ADDRESS','ltc1q-your-own-address-here'),
+      ('LTC_MIN_CONFS','2'),          -- confirmations before a key is minted
+      ('LTC_QUOTE_TTL','1200')        -- seconds an amount is held for
+    on conflict (key) do update set value = excluded.value;
+
+Then `curl -s $F/crypto/check` should read `address_shape_ok: true`, `mint_secret: configured`, and a
+price per plan. If a rate source is unreachable the quote **refuses** rather than guessing.
+
+**Why the amount is the order.** A quote adds 0.000001–0.001 LTC of unique "dust" to the plan price and
+the database refuses to open a second order at an amount that is already reserved. So ₦18,000 is not
+`0.24000000` LTC but `0.24001733` — a transfer identifies its buyer with no reference numbers, no email,
+and no "what's your txid?" in your DMs. The watermark is generated with BigInt on purpose: an `int32`
+overflow (`1800 × 1e8`) silently zeroed it in the first version, which would have made two buyers of the
+same plan indistinguishable. `tests/edge-deno.js` pins the exact arithmetic now.
+
+**What is not true, said plainly:**
+- `tools/verify-crypto-ui.js` is the one that catches a broken panel, and it is the reason the first
+  live version of this page is not quietly broken: `/js/crypto.js` was 404 because the file was not in
+  the `PUBLIC` whitelist, and a whitelist miss looks like a routing bug from curl. That run rendered
+  the real page, clicked the real button, and fed it the real HTTP bodies.
+- There is no email. The key is returned in the browser and stored on the order row, readable by
+  whoever holds the quote token (the buyer, from `#ltc=id.token` in their URL, or `crypto_get` by hand).
+  Want receipts in an inbox? Set `RECEIPT_WEBHOOK_URL` in `app_config` to any endpoint that can send
+  mail (a 20-line Resend function, a Make/Zapier webhook, an Airtable form). On settlement the function
+  POSTs the whole receipt object there once, fire-and-forget — no code change, and a dead webhook can
+  never block a buyer from getting their key, because the key is returned before it is attempted.
+- Your address is public, so anyone can watch it. Two defences exist: the watermark (a stranger's
+  payment will not match your order's amount) and a 2-minute age guard (a transaction older than the
+  quote cannot be claimed for it). The residual risk is a payment that matches exactly and lands inside
+  the window — rare, but a shared address makes it possible. **Rotate `LTC_ADDRESS` per campaign** if
+  volume ever makes you nervous, and expire old orders by leaving `LTC_QUOTE_TTL` short.
+- Under/overpayment is refused, not reconciled. Right now `crypto_probe` requires an exact match; a
+  buyer who sends `0.24` when asked for `0.24001733` gets nothing automatically. Refund by hand, or
+  widen the tolerance in `crypto_probe` deliberately (`>= amount` is a one-line change that trades away
+  the "amount is the order id" property, so it should be a decision, not a default).
+
+Verify any of it with the live checker, which needs no payment:
+
+    SUPABASE_ACCESS_TOKEN=… node tools/verify-crypto.js --address --explorer   # 48 checks incl. your address + BlockCypher
+    node tests/edge-deno.js       # 70 checks, the real module under Deno, services stubbed, no network
+    node tools/verify-crypto-ui.js  # 34 checks: renders buy.html in jsdom and CLICKS it, answering
+                                    # the page's fetches with the LIVE function's real responses
 
 ## A CDN in front of a paywall is a leak until you say otherwise
 

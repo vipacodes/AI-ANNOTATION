@@ -20,6 +20,7 @@
 --   · app_config.value: NOT NULL without a DEFAULT — 0003 supplies DEFAULT '' so the ALTER can run on a table that already has rows. Change 0001 if that default is wrong for you.
 --   · unlock_attempts.id: primary key exists in 0001's CREATE but ALTER cannot add it to an existing table — old databases already have it, so this is not a gap.
 --   · unlock_attempts.ok: NOT NULL without a DEFAULT — 0003 supplies DEFAULT false so the ALTER can run on a table that already has rows. Change 0001 if that default is wrong for you.
+--   · crypto_payments: introduced after the first revision — 0001's CREATE TABLE is the whole repair, so 0003 emits nothing for it.
 
 -- The shape constraint 0001 declares. ADD CONSTRAINT has no IF NOT EXISTS, so on a re-run
 -- this raises 42710 "constraint already exists" and takes the whole migration down with it.

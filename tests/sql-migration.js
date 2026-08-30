@@ -115,8 +115,12 @@ console.log('\n\u250c\u2500 0001 and 0002 cannot drift (0002 repairs older datab
     if (!c) return '';
     const at = c.search(new RegExp('create or replace function public\\.' + n + '\\s*\\(', 'i'));
     if (at < 0) return '';
-    const next = FUNCS.map((o) => ({ o, i: c.indexOf('create or replace function public.' + o + '(', at + 10) }))
-      .filter((x) => x.i > 0).sort((x, y) => x.i - y.i);
+    // A literal indexOf on "fn(" silently missed every signature written as "fn(\n  p_arg …" —
+    // which is how one function's slice swallowed the next and this test reported a mismatch in
+    // an UNRELATED function (key_mint). The boundary regex is the real fix; the style rule below
+    // keeps both files parseable by anything else that reads them line by line.
+    const next = FUNCS.map((o) => ({ o, i: c.search(new RegExp('create or replace function public\\.' + o + '\\s*\\(', 'g')) }))
+      .filter((x) => x.i > at).sort((x, y) => x.i - y.i);
     return (next.length ? c.slice(at, next[0].i) : c.slice(at)).replace(/\s+/g, ' ').trim();
   });
   const a = bodies('0001_paywall.sql'), b = bodies('0002_portable_base64url.sql');
@@ -128,9 +132,13 @@ console.log('\n\u250c\u2500 0003 covers every column 0001 declares');
   // The generator is the only thing allowed to interpret 0001's SQL; re-parsing it here with a
   // regex is how this test reported "missing: select, return" while the migration was fine.
   const gen = require('../tools/gen-migrations-lib.js');
-  const { colsByTable, generatedCols } = gen.extract();
+  const { colsByTable, generatedCols, NEW_TABLES } = gen.extract();
+  // A table introduced after the first revision has no old shape to backfill: 0001's CREATE TABLE
+  // IS the repair, and an ALTER for it would fail on a database that has never seen the table.
+  const covered = Object.fromEntries(Object.entries(colsByTable)
+    .filter(([t]) => !(gen.NEW_TABLES || []).includes(t)));
   const repair = code['0003_backfill_columns.sql'] || '';
-  const cols = Object.values(colsByTable).flat();
+  const cols = Object.values(covered).flat();
   const named = new Set([...repair.matchAll(/add column if not exists\s+(\w+)/g)].map((m) => m[1]));
   const missing = cols.filter((c) => !named.has(c));
   ok('every column declared by 0001 has an ALTER in 0003' +

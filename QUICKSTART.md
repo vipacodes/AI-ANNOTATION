@@ -22,6 +22,20 @@ Open `$F/index.html` in a browser, go to **Unlock**, and paste a key from
 `access_keys` table in your Supabase project, so it can be revoked from the database and stops
 working on the buyer's next request.
 
+Take Litecoin without a processor, an email account, or touching a terminal per sale:
+
+```bash
+# one row turns it on — the address is config, never code
+#   insert into public.app_config (key, value) values ('LTC_ADDRESS','ltc1q…')
+#     on conflict (key) do update set value = excluded.value;
+curl -s $F/crypto/check        # address shape, mint secret, and a live price per plan
+curl -s -X POST $F/crypto/quote -H 'content-type: application/json'   -d '{"plan":"season"}'      # → {id, token, amount:"0.24001733", address, pay:"litecoin:…"}
+```
+
+The odd last digits are the buyer's watermark: each open order gets a unique amount, so a transfer
+identifies its owner without a reference number. `buy.html` shows the amount, watches the chain, and
+unlocks itself at 2 confirmations — see `DEPLOY.md` § D for what that does and does not protect you from.
+
 Mint straight over HTTP (this is what a payment webhook will call, once you wire one up):
 
 ```bash

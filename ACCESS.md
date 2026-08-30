@@ -84,7 +84,25 @@ node tools/upload-site.js --check                                         # buck
 `MINT_SECRET` lives in the database and is not written into any tracked file. If you lose it, set
 a new one: `update public.app_config set value = '<new>' where key = 'MINT_SECRET';`
 
-## Housekeeping, once, whatever you choose
+## Taking Litecoin (one row to turn on)
+
+    insert into public.app_config (key, value) values
+      ('LTC_ADDRESS','ltc1q-your-own-address')
+    on conflict (key) do update set value = excluded.value;
+
+Everything else about it is in `DEPLOY.md` § D. Three things worth knowing before you advertise it:
+
+- **Your ledger now has orders, not just keys.** `select id, plan, amount_lt, status, txid, buyer_email from
+  public.crypto_payments order by created_at desc;` — `status` goes `pending → detected → paying → paid`.
+  Anything stuck in `paying` means the key mint failed after a payment was seen: `update … set status='detected'`
+  and the next poll finishes it. Nothing is ever lost, because the amount is recorded on the row.
+- **A buyer who loses the page is not lost** as long as they kept the URL (the order token lives in `#ltc=…`)
+  or can produce their txid. If they have neither, find the row and mint by hand — the key is already on the
+  row (`full_key`) once paid, so read it out rather than re-issuing.
+- **The address is public, so rotate it** if a campaign makes you nervous: change `LTC_ADDRESS` and old open
+  orders keep their old address (each order stores the address it quoted), so nobody is stranded mid-payment.
+
+, once, whatever you choose
 
 - **Rotate the Supabase access token you pasted in this chat** at
   <https://supabase.com/dashboard/account/tokens>. It is the one that ran the migrations, set the

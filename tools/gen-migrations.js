@@ -23,7 +23,7 @@ const fs = require('fs');
 const path = require('path');
 
 const { stripComments } = require('./sql-tokenize.js');
-const { extract, FUNCS, TABLE_NAMES, SRC } = require('./gen-migrations-lib.js');
+const { extract, FUNCS, TABLE_NAMES, NEW_TABLES, SRC } = require('./gen-migrations-lib.js');
 
 const MIG = path.join(__dirname, '..', 'supabase', 'migrations');
 const checkOnly = process.argv.includes('--check');
@@ -74,6 +74,7 @@ const out2 = HEADER2 + '\n' + FUNCS.map((n) => fns[n]).join('\n\n');
 const notes = [];
 const lines = [];
 for (const t of TABLE_NAMES) {
+  if (NEW_TABLES.includes(t)) { notes.push(`${t}: introduced after the first revision — 0001's CREATE TABLE is the whole repair, so 0003 emits nothing for it.`); continue; }
   const rows = [];
   for (const c of TABLES[t]) {
     let decl = c.decl;

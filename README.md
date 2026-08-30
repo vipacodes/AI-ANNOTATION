@@ -29,7 +29,7 @@ It also includes:
   credential gate), labelled **"reconstruction · not a screenshot"**, plus PNG exports in
   `assets/` for sharing. They are drawn, not scraped: no vendor asset is embedded or
   hot-linked, and no video is faked.
-- **`buy.html` / `gate.html` / `js/access.js` / `server.js` / `deploy/`** — the paywall.
+- **`buy.html` / `gate.html` / `js/access.js` / `server.js` / `deploy/`** — the paywall, plus one-time payment in Litecoin to your own wallet (`js/crypto.js`, `/crypto/*`): a unique watermarked amount per order, detected on-chain, key minted with no webhook, no processor account and no email.
   `tools/keygen.js` mints signed keys (`id.signature.expiry`), the server withholds protected
   pages *and* the corpus JS (`/js/tasks.js` returns a 94-byte stub, not the tasks) until a
   valid key presents itself. See **`DEPLOY.md`** for publishing it and taking money.

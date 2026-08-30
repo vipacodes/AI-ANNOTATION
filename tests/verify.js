@@ -329,6 +329,41 @@ async function readyKeyed(url, key) {
     need(!/outlier\.ai\/|\/static\/|screenshot\.(png|jpg)/i.test(svgSrc), 'no scraped vendor screenshots referenced', 'points at vendor assets');
   }
 
+  console.log('\n\u250c\u2500 every script a page loads is on the serving whitelist');
+  {
+    // /js/crypto.js was 404 in production for a whole deploy cycle for exactly this reason: the file
+    // was uploaded, was public, and simply was not named in PUBLIC's alternation — so it matched neither
+    // PUBLIC nor PROTECT and fell to the lock's 404 branch, which is indistinguishable from a routing bug
+    // from the outside. This test walks the markup instead of trusting whoever edited the page last.
+    const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+    // Read the list literals the same way the drift test does — from the source line itself — so this
+    // proves what server.js ACTUALLY serves, not what this file expects it to serve.
+    const lit = (name) => {
+      const i = src.indexOf('const ' + name + ' = /');
+      if (i < 0) return '$^';
+      const line = src.slice(i, src.indexOf('\n', i));
+      const j = line.indexOf('= /'), k = line.lastIndexOf('/');
+      return k > j ? line.slice(j + 3, k) : '$^';
+    };
+    const pub = new RegExp(lit('PUBLIC'));
+    const pro = new RegExp(lit('PROTECT'));
+    const refs = new Set();
+    for (const f of fs.readdirSync(ROOT).filter((n) => n.endsWith('.html'))) {
+      const h = fs.readFileSync(path.join(ROOT, f), 'utf8');
+      for (const m of h.matchAll(/<script[^>]+src="([^"]+)"/g)) refs.add(m[1]);
+      for (const m of h.matchAll(/<link[^>]+href="(\/css\/[^"]+)"/g)) refs.add(m[1]);
+    }
+    const bad = [...refs].filter((r) => {
+      const p = r[0] === '/' ? r : '/' + r;
+      return !/\$\{|https?:/.test(r) && !/\.(js|css)$/.test(p) ? false : (!pro.test(p) && !pub.test(p));
+    });
+    need(bad.length === 0, 'all ' + refs.size + ' free assets referenced by any page are on PUBLIC (an unlisted file 404s through the lock, not a 500)',
+      'unlisted: ' + bad.join(', '));
+    need([...refs].every((r) => !/\.min\.js|googleapis|cdn|unpkg|jsdelivr/i.test(r)),
+      'no page pulls a script from a CDN (the site must work where a CDN is blocked, and a paywall must not depend on a third party)',
+      [...refs].filter((r) => /googleapis|cdn|unpkg|jsdelivr/i.test(r)).join(', '));
+  }
+
   console.log('\n\u250c\u2500 buy.html + gate.html (the paywall, client side)');
   {
     const { w, d, errs } = await ready('buy.html');
@@ -346,6 +381,32 @@ async function readyKeyed(url, key) {
     need(d.getElementById('todo').style.display === 'block', 'clicking an unwired checkout reveals the two-line TODO', 'no guidance shown');
     need(!/<form[^>]*(stripe|paypal|paystack)[^>]*>/i.test(d.body.innerHTML) && !/cvv|card number/i.test(body), 'no card data collected on this side', 'collects card fields');
   }
+  {
+    // The crypto panel loads on a page a stranger can open, so the two things worth asserting are
+    // that it does not crash before a quote exists, and that it does not carry anything about money
+    // it should not (an address is config, a token is the buyer's, a secret is neither).
+    const { d, errs } = await ready('buy.html');
+    need(!!d.getElementById('ltc-go') && !!d.getElementById('ltc-box'), 'crypto panel present with its quote button and its reveal box', 'no crypto UI');
+    need(!!d.querySelector('script[src="js/crypto.js"]'), 'the crypto client is loaded as a file, not inlined', 'not wired');
+    const box = d.getElementById('ltc-box');
+    need(box && box.style.display === 'none', 'the order box is hidden until an amount is actually quoted', 'shown with nothing to pay');
+    const html = d.body.innerHTML;
+    // Naming a setting in the owner-facing "two lines to fill" note is documentation; a VALUE in
+    // client markup is a leak. So the assertion is about assignment-shaped text, not about words.
+    need(!/(LTC_ADDRESS|MINT_SECRET|SERVICE_ROLE|PAY_SECRET_KEY)\s*[:=]\s*['\"]?[A-Za-z0-9_\-.]{8,}/.test(html),
+      'no config VALUE is written into the pay-before-here page (names in setup notes are fine)',
+      (html.match(/(MINT_SECRET|LTC_ADDRESS|PAY_SECRET_KEY)\s*[:=]\s*[^<]{0,30}/) || [''])[0]);
+    need(!/[LM][a-km-zA-HJ-NP-Z1-9]{26,34}|ltc1[a-z0-9]{20,}/.test(html.replace(/ltc1q[^<>]{20,}/g, function (m) { return m.slice(0, 6) + '…'; })),
+      'no deposit address is hard-coded into the page (it comes from config at quote time)', 'an address is in the HTML');
+    const cj = fs.readFileSync(path.join(ROOT, 'js/crypto.js'), 'utf8');
+    need(/#ltc=/.test(cj) && /sessionStorage/.test(cj), 'the order token is kept in the fragment AND sessionStorage, so a reload re-attaches', 'no resume path');
+    need(!/location\.search\s*=|history\.replaceState\(.*\?ltc/.test(cj),
+      'the token is kept out of the query string (proxies log those, and people paste URLs)', 'token goes in the query');
+    need(/window\.QR/.test(cj) && !/cdn|unpkg|googleapis/.test(cj),
+      'QR is opt-in via a local file and never fetched from a CDN', 'external QR dependency');
+    need(!errs.length, 'the crypto client ran clean on load', errs.join(' | ').slice(0, 160));
+  }
+
   {
     const { d, errs } = await ready('gate.html');
     need(!errs.length, 'gate page scripts run clean', errs.join(' | '));
@@ -582,6 +643,27 @@ async function readyKeyed(url, key) {
     const passed = (out.match(/\u2713/g) || []).length;
     need(t.status === 0, 'edge function harness: ' + passed + ' checks green (real module, stubbed PostgREST, fail-closed verified)',
       out.split('\n').filter((l) => /\u2717|Error/.test(l)).slice(0, 3).join(' | ') || 'exit ' + t.status);
+  }
+
+  console.log('\n\u250c\u2500 supabase/functions/annotate/index.ts (imported for real, under Deno)');
+  {
+    // The reason this block exists is a hole, not a nice-to-have: `node --check` cannot parse .ts,
+    // and the type checker only complains about the file's pre-existing looseness, so the deployed
+    // module had never been EXECUTED by any test. A route unreachable at runtime, and an int32
+    // overflow that zeroed every crypto watermark, both passed everything I had. Deno is optional
+    // (a SKIP must not be read as a pass), but the crypto paths have no other coverage offline.
+    const { spawnSync } = require('child_process');
+    const d = spawnSync(process.execPath, [path.join(ROOT, 'tests/edge-deno.js')], { cwd: ROOT, encoding: 'utf8', timeout: 300000 });
+    const out = (d.stdout || '') + (d.stderr || '');
+    if (/SKIP/.test(out)) {
+      console.log('   ~ edge-deno skipped: no deno runtime (install deno or set DENO_BIN to cover the deployed module for real)');
+    } else {
+      const passed = (out.match(/\u2713/g) || []).length;
+      need(d.status === 0, 'edge-deno harness: ' + passed + ' checks green (real Supabase module under real Deno, services stubbed, no network)',
+        out.split('\n').filter((l) => /\u2717|Error/.test(l)).slice(0, 3).join(' | ') || 'exit ' + d.status);
+      need(/no network|reproducible/.test(out) || /\u2713 edge-deno/.test(out),
+        'edge-deno proves it never reached the live internet, so its verdicts are reproducible', 'the offline guarantee is not asserted');
+    }
   }
 
   console.log('\n\u250c\u2500 the live-deploy tools, and the two rules they exist to protect');

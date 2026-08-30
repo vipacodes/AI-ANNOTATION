@@ -10,8 +10,14 @@ const { stripComments, splitStatements, matchParen, splitTopInside } = require('
 
 const MIG = path.join(__dirname, '..', 'supabase', 'migrations');
 const SRC = path.join(MIG, '0001_paywall.sql');
-const FUNCS = ['key_sig', 'key_fill', 'key_check', 'key_attempt', 'key_mint'];
-const TABLE_NAMES = ['access_keys', 'app_config', 'unlock_attempts'];
+const FUNCS = ['key_sig', 'key_fill', 'key_check', 'key_attempt', 'key_mint',
+               'cfg', 'cache_get', 'cache_put', 'crypto_quote', 'crypto_get', 'crypto_probe', 'crypto_mark'];
+const TABLE_NAMES = ['access_keys', 'app_config', 'unlock_attempts', 'crypto_payments'];
+// Tables introduced after the first revision are created whole by 0001 on every install, so an
+// existing database simply does not have them yet — there are no columns to backfill onto a table
+// that is absent. Emitting ALTERs for them is how a repair file grows a column list that the
+// CREATE it is repairing no longer matches.
+const NEW_TABLES = ['crypto_payments'];
 
 function sliceFunctions(text) {
   const out = {};
@@ -71,7 +77,7 @@ function tableConstraint(text, table) {
 }
 
 
-const DEFAULTS = { text: "''", bigint: '0', int: '0', smallint: '0', boolean: 'false', timestamptz: 'now()', timestamp: 'now()' };
+const DEFAULTS = { text: "''", bigint: '0', int: '0', smallint: '0', boolean: 'false', timestamptz: 'now()', timestamp: 'now()', numeric: '0', jsonb: "'{}'" };
 
 /* Everything the two generated files are built from, in one call. */
 function extract() {
@@ -82,7 +88,7 @@ function extract() {
   const generatedCols = Object.values(decls).flat().filter((c) => /generated always as/.test(c.decl) && /\bstored\b/.test(c.decl)).map((c) => c.name);
   if (!generatedCols.length) throw new Error('no STORED generated columns found - the extractor has drifted from 0001');
   const constraint = tableConstraint(src, 'access_keys');
-  return { src, fns, decls, colsByTable, generatedCols, constraint, TABLE_NAMES, FUNCS, DEFAULTS };
+  return { src, fns, decls, colsByTable, generatedCols, constraint, TABLE_NAMES, NEW_TABLES, FUNCS, DEFAULTS };
 }
 
-module.exports = { extract, sliceFunctions, tableColumns, tableBlock, tableConstraint, FUNCS, TABLE_NAMES, SRC, MIG };
+module.exports = { extract, sliceFunctions, tableColumns, tableBlock, tableConstraint, FUNCS, TABLE_NAMES, NEW_TABLES, SRC, MIG };

@@ -121,6 +121,71 @@ function redeem(ref) {
   if (ref) redeem(ref);
 })();
 </script>
+<!-- ============================ pay with Litecoin ============================
+     The order is identified by its AMOUNT: the server adds a few litoshi of unique "dust" to the
+     price, so no two open orders ask for the same number and a transfer can be recognised without
+     the sender telling us anything. Access is granted when the site sees the exact amount arrive —
+     no email, no human, no provider account. -->
+<div class="wrap" style="margin:0 0 60px">
+  <div class="panel" style="padding:22px 24px">
+    <div class="row" style="justify-content:space-between;align-items:baseline">
+      <div>
+        <div class="mono" style="font-size:10px;letter-spacing:.1em;color:var(--dim);text-transform:uppercase">Or pay once with Litecoin</div>
+        <p class="dim" style="margin:8px 0 0;font-size:13.5px;max-width:62ch">Send the <b>exact</b> amount below to the address below. It is yours alone —
+        the odd last digits are what identify your order — and access is released as soon as the network has confirmed it.
+        Nothing is held while you decide: prices move, so an order expires after 20&nbsp;minutes.</p>
+      </div>
+      <button class="btn" id="ltc-go">Get a Litecoin amount</button>
+    </div>
+
+    <div class="row" style="margin-top:14px;gap:8px;flex-wrap:wrap">
+      <select id="ltc-plan" style="min-width:190px">
+        <option value="week">7-day access — ₦6,000</option>
+        <option value="season" selected>90-day access — ₦18,000</option>
+        <option value="usd">90-day access (USD) — $18</option>
+      </select>
+      <input id="ltc-email" placeholder="email for your receipt (optional)" style="min-width:250px" autocomplete="email" type="email">
+    </div>
+
+    <div id="ltc-box" style="display:none;margin-top:18px;padding-top:18px;border-top:1px solid var(--line)">
+      <div class="row" style="gap:18px;flex-wrap:wrap;align-items:flex-start">
+        <div style="flex:1;min-width:280px">
+          <div class="mono" style="font-size:10px;letter-spacing:.1em;color:var(--dim)">Send exactly</div>
+          <div id="ltc-amount" class="mono" style="font-size:26px;margin:4px 0 2px">—</div>
+          <div id="ltc-approx" class="dim" style="font-size:12px"></div>
+          <div class="mono" style="font-size:10px;letter-spacing:.1em;color:var(--dim);margin-top:14px">To this address</div>
+          <div id="ltc-addr" class="mono" style="font-size:12.5px;word-break:break-all;margin-top:4px;padding:8px 10px;background:var(--bg);border-radius:6px"></div>
+          <div class="row" style="margin-top:10px;gap:8px">
+            <button class="btn ghost" id="ltc-copy">Copy amount + address</button>
+            <a class="btn ghost" id="ltc-uri" href="#">Open in wallet</a>
+          </div>
+        </div>
+        <div style="width:200px">
+          <div id="ltc-qr" style="width:200px;height:200px;border:1px solid var(--line);border-radius:8px;display:flex;align-items:center;justify-content:center;text-align:center;padding:10px;font-size:11.5px;line-height:1.5"></div>
+          <div class="dim" id="ltc-order" style="font-size:11px;margin-top:8px"></div>
+        </div>
+      </div>
+
+      <div class="row" style="justify-content:space-between;margin-top:18px;align-items:center;gap:12px;flex-wrap:wrap">
+        <div id="ltc-status" class="mono" style="font-size:12.5px">Watching the chain for this exact amount…</div>
+        <div class="row" style="gap:8px">
+          <span id="ltc-expiry" class="dim" style="font-size:11.5px"></span>
+          <button class="btn ghost" id="ltc-refresh">Check now</button>
+        </div>
+      </div>
+      <details style="margin-top:12px">
+        <summary class="dim" style="font-size:12px;cursor:pointer">Paid already, or closed the page? Claim with your transaction id.</summary>
+        <div class="row" style="margin-top:10px;gap:8px">
+          <input id="ltc-txid" placeholder="64-character transaction id" style="min-width:280px;font-family:var(--mono)">
+          <button class="btn ghost" id="ltc-claim">Claim it</button>
+        </div>
+        <p class="dim" style="font-size:11.5px;margin:8px 0 0">Kept the link with <code>#ltc=…</code>? Then this box already knows your order; a txid is only needed if you lost it.</p>
+      </details>
+      <div id="ltc-out"></div>
+    </div>
+  </div>
+</div>
+<script src="js/crypto.js"></script>
 <div id="redeem" class="wrap" style="display:none;margin:0 0 60px" data-plan="season">
   <div class="panel" style="padding:20px 22px">
     <div class="mono" style="font-size:10px;letter-spacing:.1em;color:var(--dim);text-transform:uppercase">Already paid?</div>

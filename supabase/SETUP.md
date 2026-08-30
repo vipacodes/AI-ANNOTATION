@@ -37,6 +37,24 @@ What the migration enforces:
 ```bash
 cd annotation-trainer
 node tools/keygen.js secret                 # this is what you pasted into app_config
+
+### 2b · Optional: take Litecoin directly (no account, no email, no fee)
+
+One row turns it on, and one command proves it. Your address is never in the code or the repo —
+it is read from the database at quote time, so you can change wallets without a redeploy.
+
+    insert into public.app_config (key, value) values
+      ('LTC_ADDRESS','ltc1q-your-own-address')
+    on conflict (key) do update set value = excluded.value;
+
+    SUPABASE_ACCESS_TOKEN=… node tools/verify-crypto.js --address --explorer
+    # 31 checks, including "BlockCypher recognises this address" and "the price feeds agree within 2%"
+
+The buyer sees an amount like `0.24001733` LTC. The last digits are theirs alone — that watermark is
+how the site knows whose payment arrived, without you checking anything. `LTC_ADDRESS` is the only
+required setting; `LTC_MIN_CONFS` (2) and `LTC_QUOTE_TTL` (1200 s) are optional. Full trade-offs:
+`DEPLOY.md` § D.
+
 ```
 
 If the two differ, **no key ever verifies**. Mint one and check it against Postgres:
