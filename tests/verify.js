@@ -532,6 +532,38 @@ async function readyKeyed(url, key) {
     }
   }
 
+  console.log('\n\u250c\u2500 supabase backend (optional key store)');
+  {
+    const dir = 'supabase';
+    need(fs.existsSync(path.join(ROOT, dir, 'migrations/0001_paywall.sql')) && fs.existsSync(path.join(ROOT, dir, 'functions/annotate/index.ts')),
+      'supabase/ ships a migration and an edge function', 'supabase files missing');
+    const sql = fs.readFileSync(path.join(ROOT, 'supabase/migrations/0001_paywall.sql'), 'utf8');
+    need(/function public\.key_check/.test(sql) && /function public\.key_mint/.test(sql) && /function public\.key_attempt/.test(sql),
+      'three RPCs defined: key_check / key_mint / key_attempt', 'functions missing');
+    need(/grant execute on function public\.key_check[^;]*to anon/.test(sql),
+      'only key_check is granted to the public API roles', 'key_check not granted');
+    need(/revoke all on all tables in schema public from anon, authenticated/.test(sql) && /revoke all on table public\.app_config from anon/.test(sql),
+      'tables and the signing secret are revoked from anon/authenticated', 'over-permissive grants');
+    need(/revoke all on function public\.key_mint/.test(sql), 'minting is not callable by the public API', 'key_mint exposed');
+    need(/trigger key_fill/.test(sql), 'a trigger derives signatures so hand-written rows cannot drift', 'no sig trigger');
+    const balanced = (n) => (sql.match(new RegExp('\\' + n, 'g')) || []).length % 2 === 0;
+    need(balanced('$$'), 'plpgsql dollar-quoting is balanced', 'unbalanced $$');
+    need((sql.match(/\(/g) || []).length === (sql.match(/\)/g) || []).length, 'SQL parentheses balance', 'unbalanced parens');
+    const fn = fs.readFileSync(path.join(ROOT, 'supabase/functions/annotate/index.ts'), 'utf8');
+    const g = (src, name) => (src.match(new RegExp('^const ' + name + ' = (/.*/);$', 'm')) || [])[1];
+    const srvSrc = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+    need(['PUBLIC', 'PROTECT'].every((n) => g(fn, n) && g(fn, n) === g(srvSrc, n)),
+      'edge function, Pages function and server share one identical path rule', 'lock lists have drifted');
+    need(g(fn, 'PUBLIC').startsWith('/^') && g(fn, 'PUBLIC').endsWith('$/'), 'the edge function list is anchored at both ends', 'unanchored list');
+    need(/402/.test(fn) && /window\.Tasks=\{list:function\(\)\{return\[\]/.test(fn), 'edge function withholds HTML and the corpus stub alike', 'edge lock incomplete');
+    need(/object\/authenticated\//.test(fn), 'reads the site from a PRIVATE bucket (public bucket = open door)', 'bucket not private');
+    need(!/SERVICE_ROLE_KEY[^\n]{0,10}=\s*['"][A-Za-z0-9_\-]{20,}/.test(fn) && !/eyJ[A-Za-z0-9_\-]{20,}/.test(fn),
+      'no service key or JWT hard-coded in the function', 'secret in source');
+    const srv = srvSrc;
+    need(/ACCESS_MODE !== 'local'/.test(srv) && /SUPABASE_URL/.test(srv),
+      'server.js supports the Postgres verifier and can be forced offline for tests', 'no verifier switch');
+  }
+
   console.log('\n\u250c\u2500 boundaries: what this site refuses to be');
   {
     const files = fs.readdirSync(ROOT).filter((f) => f.endsWith('.html'))

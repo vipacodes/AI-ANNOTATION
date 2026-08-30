@@ -57,9 +57,13 @@ const argv = process.argv.slice(2);
 const cmd = argv[0];
 const arg = argv[1] && argv[1].indexOf('--') === 0 ? null : argv[1];
 const rest = argv.slice(arg === null && argv[1] ? 1 : 2);
+const BOOL = ['sql', 'json', 'quiet'];
 const flags = {};
-for (let i = 0; i + 1 < rest.length; i += 2) {
-  if (rest[i].indexOf('--') === 0) flags[rest[i].replace(/^--/, '')] = rest[i + 1];
+for (let i = 0; i < rest.length; i++) {
+  if (rest[i].indexOf('--') !== 0) continue;
+  const name = rest[i].replace(/^--/, '');
+  if (BOOL.indexOf(name) >= 0) { flags[name] = true; continue; }
+  flags[name] = rest[i + 1]; i += 1;                 /* value flag: consume the next token */
 }
 
 if (cmd === 'new') {
@@ -67,13 +71,21 @@ if (cmd === 'new') {
   const id = crypto.randomBytes(5).toString('base64url').replace(/[^A-Za-z0-9]/g, 'x').slice(0, 8);
   const days = Number(flags.days || 90);
   const exp = Date.now() + days * 864e5;
-  const key = id + '.' + sign(id, exp) + '.' + exp;
+  const sig = sign(id, exp);
+  const key = id + '.' + sig + '.' + exp;
   fs.mkdirSync(DATA, { recursive: true });
   fs.appendFileSync(ISSUED, JSON.stringify({
     id, label: flags.label || 'customer', days,
     until: new Date(exp).toISOString().slice(0, 10), at: new Date().toISOString()
   }) + '\n');
   console.log('\n  ' + key + '\n');
+  if (flags.sql) {
+    // Postgres-backed mode (supabase/migrations/0001_paywall.sql): insert the row
+    // so revocation and labels live in the database instead of in issued.jsonl.
+    console.log('  -- paste into the Supabase SQL editor:');
+    console.log("  insert into public.access_keys (id, label, sig, exp_ms, days) values ('" + id +
+        "', '" + String(flags.label || 'customer').replace(/'/g, "''") + "', '" + sig +      "', " + exp + ", " + days + ") on conflict (id) do nothing;\n");
+  }
   console.log('  label: ' + (flags.label || 'customer') + '  ·  valid ' + days + ' days  ·  id ' + id);
   console.log('  revoke with: node tools/keygen.js revoke ' + id + '\n');
 } else if (cmd === 'verify') {

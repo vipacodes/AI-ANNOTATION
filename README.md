@@ -73,13 +73,22 @@ persistence. The server is only needed for the shared submissions log.
 
 ## See also
 
-`QUICKSTART.md` (view it now / demo URL / real deploy) and `DEPLOY.md` (hosting, keys,
-payments, hardening, legal notes).
+`QUICKSTART.md` (view it now / demo URL / real deploy), `DEPLOY.md` (hosting, keys,
+payments, hardening, legal notes), and `supabase/SETUP.md` — an optional Postgres-backed
+key store with an edge function that can serve the whole site. Keys, revocation, buyer
+labels, a brute-force counter and payment-webhook minting then live in the database:
+
+```
+supabase/migrations/0001_paywall.sql      # key_check / key_mint / key_attempt RPCs + trigger
+supabase/functions/annotate/index.ts      # serves the site from a private bucket, gates by key
+supabase/SETUP.md                         # paste-ready dashboard steps
+```
 
 ## Run the checks
 
 ```bash
-node tests/verify.js        # needs jsdom: npm i jsdom, or point it at any local install
+npm i --prefix ~/.testdeps jsdom   # one-time, outside the repo (keeps this repo dependency-free)
+node tests/verify.js               # 258 assertions; needs jsdom, resolved from that prefix
 ```
 
 It loads every page headlessly, clicks through the real UI (answers the assessment, assigns
@@ -96,7 +105,7 @@ forged signature refused, an expired key refused, and revocation taking effect o
 request. Client-side, it loads `queue.html` with a key in storage and asserts the content only
 appears for a server-verified session.
 
-Last run: **244 assertions, 0 failures** (`node tests/verify.js`) — 8 task types, 13 pages,
+Last run: **258 assertions, 0 failures** (`node tests/verify.js`) — 8 task types, 13 pages,
 the paywall (live server boot), and the boundary checks.
 
 ## Structure

@@ -3,3 +3,7 @@ data/
 assets/*.png
 .DS_Store
 *.log
+
+# never commit the local supabase link/credentials
+supabase/.temp
+.deploy/
