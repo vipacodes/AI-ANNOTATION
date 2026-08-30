@@ -645,6 +645,22 @@ async function readyKeyed(url, key) {
       out.split('\n').filter((l) => /\u2717|Error/.test(l)).slice(0, 3).join(' | ') || 'exit ' + t.status);
   }
 
+  console.log('\n\u250c\u2500 the Vercel entry point (api/index.js, over real HTTP)');
+  {
+    // A third runtime, and the one most likely to be set up by whoever inherits this: Vercel's
+    // zero-config modes either crash (import server.js, find no handler) or publish the paid corpus
+    // ungated as a static site. Both look "deployed". This is the only check that the catch-all
+    // rewrite, and not the filesystem, is what answers a request.
+    const { spawnSync } = require('child_process');
+    const v = spawnSync(process.execPath, [path.join(ROOT, 'tests/vercel-entry.js')], { cwd: ROOT, encoding: 'utf8', timeout: 120000 });
+    const out = (v.stdout || '') + (v.stderr || '');
+    const passed = (out.match(/\u2713/g) || []).length;
+    need(v.status === 0, 'Vercel entry: ' + passed + ' checks green (gate in front of every file, styled 402, narrow cache)',
+      out.split('\n').filter((l) => /\u2717|Error/.test(l)).slice(0, 3).join(' | ') || 'exit ' + v.status);
+    need(fs.existsSync(path.join(ROOT, 'vercel.json')) && fs.readFileSync(path.join(ROOT, 'deploy/VERCEL.md'), 'utf8').length > 1200,
+      'the Vercel config and its trap documentation ship together', 'one of them is missing');
+  }
+
   console.log('\n\u250c\u2500 supabase/functions/annotate/index.ts (imported for real, under Deno)');
   {
     // The reason this block exists is a hole, not a nice-to-have: `node --check` cannot parse .ts,

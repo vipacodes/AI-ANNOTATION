@@ -206,6 +206,21 @@ Verify any of it with the live checker, which needs no payment:
     node tools/verify-crypto-ui.js  # 34 checks: renders buy.html in jsdom and CLICKS it, answering
                                     # the page's fetches with the LIVE function's real responses
 
+## Vercel, if someone insists — and why the repo now refuses to be deployed badly there
+
+Pushing this repo to Vercel without the committed `vercel.json` gives you one of two things, and both
+report success: the Node auto-detect imports `server.js`, finds no exported handler, and shows
+`500 FUNCTION_INVOCATION_FAILED`; or the static preset publishes every file in the repo at a public
+URL, `js/tasks.js` (the paid corpus) included, with no error anywhere. The first is a broken site. The
+second is a leaked one, which is worse precisely because nothing looks wrong.
+
+`vercel.json` + `api/index.js` + `api/_gate.js` (committed) make a Vercel deploy route *everything*
+through the Cloudflare Pages gate — evaluated `beforeFiles`, because a rewrite that runs after the
+filesystem never sees a request for a file that exists. `deploy/VERCEL.md` is the full note: what each
+piece is for, the one env var that decides whether any key works at all, and the two payment surfaces
+(`/fulfill`, `/crypto/*`) that stay on the Supabase deployment. Pinned by `node tests/vercel-entry.js`
+(22 checks over real HTTP against the real handler, run by `tests/verify.js`).
+
 ## A CDN in front of a paywall is a leak until you say otherwise
 
 `cache-control` is not cosmetic here. An early version of the Supabase function gave every file
