@@ -192,6 +192,20 @@ const get = (p, opts) => new Promise((resolve, reject) => {
     'the 402 body ships in deploy/, so it survives the exclusion of gate.html', 'fallback missing');
   fsx.rmSync(dir, { recursive: true, force: true });
 
+  // Static drift guard, and the actual cause of the failed production deploy this file exists to
+  // prevent. Vercel emits a function artifact from api/index.js plus what it can TRACE through
+  // require/import; a path handed to readFileSync is invisible to it, so the gate never loaded and
+  // every request came back 500 FUNCTION_INVOCATION_FAILED. The fix is a literal, static re-export —
+  // easy to delete as "an unused file" in a future tidy-up, which would re-break the paywall silently
+  // (fail closed, so nobody gets paid content, but nobody can buy it either).
+  const gb = fs.readFileSync(path.join(ROOT, 'api/gate-bundled.js'), 'utf8');
+  need(/export\s*\{\s*onRequest\s*\}\s*from\s*'\.\.\/deploy\/cloudflare-pages-function\.js'/.test(gb),
+    'api/gate-bundled.js holds the literal static edge a bundler can inline');
+  need(/require\('\.\/gate-bundled\.js'\)/.test(fs.readFileSync(path.join(ROOT, 'api/_gate.js'), 'utf8')),
+    'the loader tries that bundled edge before it reaches for the filesystem');
+  need(!/\bgate-bundled\b/.test(fs.readFileSync(path.join(ROOT, '.vercelignore'), 'utf8')),
+    'the bundler entry is not excluded from the deploy');
+
   server.close();
   console.log('\n' + '='.repeat(56));
   if (fails.length) { fails.forEach((f) => console.log('   - ' + f)); console.log('\u2717 vercel-entry: ' + fails.length + ' failure(s)'); process.exit(1); }

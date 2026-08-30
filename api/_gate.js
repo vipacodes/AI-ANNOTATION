@@ -33,31 +33,32 @@ const FN = path.join(ROOT, 'deploy/cloudflare-pages-function.js');
  * Node builder BUNDLES a function (it emits .vercel/output/function/index.js containing api/index.js
  * and its statically-traceable requires, nothing else), so `__dirname/../deploy/…js` is simply not a
  * path that exists at runtime. Locally it always worked, because locally the repo is the filesystem.
- * Three routes, tried in order, so this holds under a bundler, under serverless-with-the-repo-present,
- * and under a hand-rolled deploy:
- *   1. a real module import, which the bundler can see and inline
- *   2. a plain require of the compiled sibling, same reason
- *   3. the file read, kept for the dev server and for runtimes that ship the tree verbatim
+ * Four routes, tried in order, because the shape of the artifact depends on whether a bundler ran:
+ *   1. require of api/gate-bundled.js — a static, literal edge the builder inlines; when it is inlined,
+ *      that is the only route that can work, and the one that carries the fix
+ *   2. the gate file beside the function, if the builder emitted it there
+ *   3. the repo tree (deploy/…js next to the function's own directory): no bundler, files verbatim
+ *   4. read the source and eval it — dev, and any runtime where nothing is importable
  */
 async function loadGate() {
-  const here = path.join(__dirname, 'gate-entry.js');
-  if (fs.existsSync(here)) {
-    try {
-      const m = await import('./gate-entry.js');
-      if (m && (m.onRequest || m.default)) return m.onRequest || m.default;
-    } catch (e) { storeErr('gate-entry import: ' + e.message); }
-    try {
-      const m = require('./gate-entry.js');
-      if (m && (m.onRequest || m.default)) return m.onRequest || m.default;
-    } catch (e) { storeErr('gate-entry require: ' + e.message); }
+  const tries = [];
+  // 1. bundled: the import graph the builder could see
+  tries.push(() => require('./gate-bundled.js'));
+  // 2/3. unbundled: the real file, wherever the function landed relative to the tree
+  for (const c of [path.join(__dirname, 'gate-entry.js'), path.join(__dirname, '..', 'deploy', 'gate-entry.js')]) {
+    if (fs.existsSync(c)) { const f = c; tries.push(() => { const m = require(f); return m && (m.onRequest || m.default); }); }
   }
-  const src = fs.readFileSync(FN, 'utf8').replace(/^export\s+async\s+function\s+onRequest/m, 'async function onRequest');
-  // The Cloudflare file reads config as `globalThis.env.X`; on Vercel's Node runtime that is
-  // process.env. One assignment, and the gate's own precedence (env wins, else the live project URL)
-  // is untouched — including its refusal to verify anything when it has neither a backend nor a secret.
-  globalThis.env = Object.assign({}, process.env);
-  const fn = new Function(src + '\nreturn { onRequest };');
-  return fn().onRequest;
+  // 4. last resort, and the one that used to be the only one: evaluate the source ourselves
+  tries.push(() => {
+    const src = fs.readFileSync(FN, 'utf8').replace(/^export\s+async\s+function\s+onRequest/m, 'async function onRequest');
+    globalThis.env = Object.assign({}, process.env);   // the gate reads config as globalThis.env.X
+    return new Function(src + '\nreturn { onRequest };')().onRequest;
+  });
+  for (const t of tries) {
+    try { const f = await t(); if (typeof f === 'function') return f; storeErr('route produced no handler'); }
+    catch (e) { storeErr(e && (e.code || '') + ' ' + String(e.message).slice(0, 120)); }
+  }
+  throw new Error('no gate route worked [' + LOAD_ERRORS.join(' | ') + ']');
 }
 
 const PREFIX = '/api/index';
