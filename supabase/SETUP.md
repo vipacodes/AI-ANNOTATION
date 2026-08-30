@@ -65,16 +65,40 @@ select public.key_check('9LaKs9E', 'WeyY7L1BPzxxXDUnQLDCorGBz2LT', 1790657059621
 so protected files only ever travel when a key checks out against Postgres.
 
 ```bash
-npm i -g supabase && supabase login
-supabase init && supabase link --project-ref veecksfcnlpppzvplcyt
-supabase functions deploy annotate --no-verify-jwt
-supabase secrets set ACCESS_MODE=postgres SITE_BUCKET=site \
-  SUPABASE_URL=https://veecksfcnlpppzvplcyt.supabase.co \
-  SUPABASE_ANON_KEY=<publishable key> SERVICE_ROLE_KEY=<service_role key>
-# upload the site to the private bucket, keeping folder structure:
-mkdir -p .deploy && rsync -a --exclude .git --exclude data --exclude .deploy --exclude 'assets/*.png' \
-  annotation-trainer/ .deploy/site/ && supabase storage cp .deploy/site site --recursive   # or use the dashboard
+npx supabase@latest link --project-ref veecksfcnlpppzvplcyt
+npx supabase@latest functions deploy annotate --no-verify-jwt
+
+# Six secrets. Note the names: the Supabase CLI REJECTS any secret beginning with SUPABASE_
+# ("Env name cannot start with SUPABASE_, skipping"), which silently deploys a function with no
+# URL and no key — it then answers every route with a 404 that looks like an empty bucket.
+npx supabase@latest secrets set \
+  ACCESS_MODE=postgres \
+  SITE_BUCKET=site \
+  PROJECT_URL=https://veecksfcnlpppzvplcyt.supabase.co \
+  ANON_KEY=<the anon or publishable key> \
+  SERVICE_ROLE_KEY=<the service_role or secret key> \
+  SITE_BASE=/functions/v1/annotate
+
+# the bucket must be PRIVATE (that is what makes withholding possible)
+curl -s -X POST https://veecksfcnlpppzvplcyt.supabase.co/storage/v1/bucket \
+  -H "Authorization: Bearer $SERVICE_KEY" -H 'content-type: application/json' \
+  -d '{"name":"site","public":false,"file_size_limit":10485760}'
+
+# upload the site files, keeping the folder structure. Writes go to /object/<bucket>/<path>;
+# /object/authenticated/<bucket>/<path> is read-only (it is what the function itself calls).
+(cd . && find *.html css js assets -type f | while read -r f; do
+  curl -s -o /dev/null -X POST \
+    -H "Authorization: Bearer $SERVICE_KEY" -H "content-type: $(
+         case $f in *.html) echo text/html;; *.css) echo text/css;; *.js) echo text/javascript;;
+                        *.svg) echo image/svg+xml;; *.png) echo image/png;; *) echo text/plain;; esac)" \
+    --data-binary "@$f" \
+    "https://veecksfcnlpppzvplcyt.supabase.co/storage/v1/object/site/$f"
+done)
 ```
+
+`SITE_BASE` matters only for cookies: Supabase mounts a function at `/functions/v1/<slug>`, so
+the browser-visible root is not `/`, and a cookie scoped to `/` on `*.supabase.co` would be sent
+to PostgREST and storage as well. Set it to your mount, or `/` when you have a custom domain.
 
 Then `https://veecksfcnlpppzvplcyt.supabase.co/functions/v1/annotate/` **is** the site. Check:
 
@@ -82,7 +106,11 @@ Then `https://veecksfcnlpppzvplcyt.supabase.co/functions/v1/annotate/` **is** th
 F=https://veecksfcnlpppzvplcyt.supabase.co/functions/v1/annotate
 curl -sI $F/platforms.html | head -1     # 200 (free)
 curl -sI $F/task.html     | head -1      # 402 (locked)  ← the whole point
-curl -s  $F/api/health                   # {"backend":"supabase-postgres",...}
+curl -s  $F/api/health                   # {"ok":true,"build":"...","url":"configured",...}
+curl -s  $F/api/debug                    # what the function can see: route, bucket read, base
+curl -sI $F/js/tasks.js | head -1        # 402 (the corpus, withheld)
+# and the cache question, which is a security question here:
+curl -s -o /dev/null -D - $F/js/tasks.js | grep -i cache-control      # must be no-store
 ```
 
 Custom domain instead of that URL: Cloudflare Pages with a redirect, or
@@ -122,6 +150,34 @@ curl -s -X POST https://veecksfcnlpppzvplcyt.supabase.co/rest/v1/rpc/key_mint \
 ```
 
 Put `key` in the buyer's email. No server of yours has to exist for that to work.
+
+## 4b · Caching rules, because a CDN in front of a paywall is a leak
+
+The edge function serves every file itself, so it also decides cacheability, and the wrong
+header here gives away paid bytes:
+
+  · a **protected** path (see `PROTECT` in the function) is always `cache-control: no-store`
+  · a **public asset** (`/css`, `/js`, `/assets`) gets `public, max-age=300`
+  · a **page or an error** is `no-store`, so a stale 404 during an upload cannot stick
+
+An early draft cached everything under `/js` for five minutes. `/js/tasks.js` is the paid
+corpus *and* lives under `/js`, so one buyer's authenticated 200 was cached and then handed to
+the next stranger for free. If you change these rules, test the order: **fetch with a key, then
+fetch the same URL without one, and the second request must still be a 402.**
+
+If you deploy the Cloudflare Pages variant instead, the function returns `next()` for unlocked
+requests and Pages' own CDN caches static assets by default. Ship a `_headers` file that pins the
+protected paths to `no-store`:
+
+    /task.html           no-store
+    /queue.html          no-store
+    /onboarding.html     no-store
+    /detector.html        no-store
+    /trust-safety.html   no-store
+    /earnings.html       no-store
+    /js/tasks.js         no-store
+    /js/detector.js      no-store
+    /data/*              no-store
 
 ## 5 · Housekeeping
 

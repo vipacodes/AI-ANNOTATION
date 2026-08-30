@@ -128,6 +128,31 @@ const stub = http.createServer((req, res) => {
   need(['PUBLIC', 'PROTECT'].every((n) => grab(fnSrc, n) && grab(fnSrc, n) === grab(srv, n) && grab(fnSrc, n) === grab(sfb, n)),
     'all three servers share one identical path rule', 'lists have drifted');
 
+  /* ---- Supabase mounts this at /functions/v1/annotate: routing and the cookie path ---- */
+  {
+    const norm = (pathname) => {
+      const SLUG = '/annotate';
+      let p = decodeURIComponent(pathname);
+      const bare = p === SLUG || p === SLUG + '/';
+      const at = bare ? 0 : p.indexOf(SLUG + '/');
+      const BASE = at === 0 ? SLUG : (at > 0 ? p.slice(0, at + SLUG.length) : '');
+      p = BASE ? (p.slice(BASE.length) || '/') : p;
+      return { route: p, cookiePath: BASE || '/' };
+    };
+    const a = norm('/index.html'), b = norm('/annotate/index.html'), c = norm('/functions/v1/annotate/index.html');
+    need(a.route === '/index.html', 'a route at the host root resolves as-is', 'root route changed: ' + a.route);
+    need(b.route === '/index.html', 'the same route behind /annotate resolves identically', 'mount strip is wrong: ' + b.route);
+    need(c.route === '/index.html', 'and behind Supabase /functions/v1/annotate too', 'deep mount strip is wrong: ' + c.route);
+    need(c.cookiePath === '/functions/v1/annotate', 'the cookie is scoped to the mount the browser calls', 'cookie path ' + c.cookiePath + ' would never be sent back');
+    need(norm('/annotate').route === '/', 'a bare /annotate is the home page, not a 404', 'bare mount: ' + norm('/annotate').route);
+    need(norm('/annotate').cookiePath === '/annotate', 'a bare mount still scopes the cookie to the mount (a sub-path deploy)', 'cookie path: ' + norm('/annotate').cookiePath);
+    need(norm('/annotate/').cookiePath === '/annotate', 'and so does a mount with a trailing slash', 'cookie path: ' + norm('/annotate/').cookiePath);
+    need(norm('/api/health').route === '/api/health', 'a path that merely does NOT contain the slug is left alone (the -1 trap)', 'mangled: ' + norm('/api/health').route);
+    need(norm('/index.html').route === '/index.html', 'no silent truncation when indexOf returns -1', 'mangled: ' + norm('/index.html').route);
+    need(norm('/functions/v1/annotate/unlock').route === '/unlock', 'the POST route survives the mount too', 'mangled: ' + norm('/functions/v1/annotate/unlock').route);
+    need(c.cookiePath !== '/', 'a mount-scoped cookie is never Path=/ (that would send the key to PostgREST and storage on the same host)', 'cookie path is /');
+  }
+
   await new Promise((r2) => stub.close(r2));
   fs.unlinkSync(tmp); try { fs.unlinkSync(tmp2); } catch (e) { }
   console.log('\n' + '\u2550'.repeat(56));

@@ -8,12 +8,14 @@
 //
 //   supabase functions deploy annotate --no-verify-jwt
 //   supabase secrets set \
-//     ANNOTATE_SECRET=...                # node tools/keygen.js secret (optional: DB mode covers it)
-//     SITE_BUCKET=site                   # private bucket holding the repo files
-//     SUPABASE_URL=https://<ref>.supabase.co
-//     SERVICE_ROLE_KEY=<service_role>     # server-only. never ship this to the browser
-//     ACCESS_MODE=postgres                 # or 'hmac' for the secret-only variant
-//     SUPABASE_ANON_KEY=<publishable>        # used for the PostgREST call in postgres mode
+//     ACCESS_MODE=postgres       # or 'hmac' for the secret-only variant (no database)
+//     SITE_BUCKET=site           # the PRIVATE bucket holding the repo files
+//     PROJECT_URL=https://<ref>.supabase.co
+//     SERVICE_ROLE_KEY=<the service key>   # server-only. never ship this to a browser
+//     ANON_KEY=<the publishable/anon key>  # used for the key_check RPC
+//   Names starting with SUPABASE_ are rejected by the CLI, hence PROJECT_URL / ANON_KEY.
+//   No signing secret lives here: key_check() in the database decides, so a leaked function
+//   environment cannot mint keys.
 //
 // Endpoints:  GET  /           index.html (free)
 //             GET  /task.html  402 + gate screen without a key, page with a key
@@ -22,10 +24,23 @@
 // ============================================================================
 
 const BUCKET = Deno.env.get('SITE_BUCKET') || 'site';
+// The function's own slug, at module scope, because mountOf() and externalBase() are module
+// functions: a const inside the handler would be out of their scope and every route would 500.
+const SLUG = '/' + ((globalThis as any).FUNCTION_SLUG || 'annotate');
 const MODE = (Deno.env.get('ACCESS_MODE') || 'postgres').toLowerCase();
 const SECRET = Deno.env.get('ANNOTATE_SECRET') || '';
-const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-const SERVICE_KEY = Deno.env.get('SERVICE_ROLE_KEY') || '';
+// The Supabase CLI refuses secret names beginning with SUPABASE_ ("Env name cannot start with
+// SUPABASE_, skipping"), which silently leaves a function without the URL it needs. So the
+// canonical names are PROJECT_URL / ANON_KEY, with the SUPABASE_* spellings kept as fallbacks
+// for anyone who set them through the dashboard or the Management API instead of the CLI.
+const env = (n) => Deno.env.get(n) || '';
+const SUPABASE_URL = env('PROJECT_URL') || env('SUPABASE_URL');
+const SERVICE_KEY = env('SERVICE_ROLE_KEY') || env('SERVICE_KEY');
+const ANON_KEY = env('ANON_KEY') || env('SUPABASE_ANON_KEY') || env('PUBLISHABLE_KEY');
+
+// Bump on deploy when debugging: GET /api/health reports it, so "is my code actually live?" is a
+// curl, not a guess. (A stale deployment looked exactly like a broken bucket for one whole session.)
+const BUILD = 'annotate-2026-08-30.2';
 
 const KEY_RE = /^([A-Za-z0-9]{6,10})\.([A-Za-z0-9_\-]{20,})\.(\d{10,13})$/;
 const KEY_COOKIE = 'at_key';
@@ -42,6 +57,39 @@ const TYPES = {
 const PUBLIC = /^\/(?:(?:index|gate|buy|guide|platforms|platform)\.html|(?:css|assets|api|\.well-known)\/[^/]*(?:\/[^/]*)*|js\/(?:storage|access|app|platforms|mockups)\.js|robots\.txt|sitemap\.xml|favicon\.ico|(?:|$))$/;
 const PROTECT = /^\/(?:task|queue|onboarding|detector|trust-safety|earnings)\.html$|^\/js\/(?:tasks|detector)\.js$|^\/data\//;
 /* END-LISTS */
+
+/* The path a browser must use to reach this function, i.e. what a cookie must be scoped to.
+   Supabase forwards the original URL in x-forwarded-* (and Cloudflare in cf-connecting-*); when
+   neither is present we are root-mounted and '/' is correct. */
+function externalBase(req) {
+  for (const h of ['x-forwarded-uri', 'x-forwarded-path', 'cf-visitor-uri']) {
+    const v = req.headers.get(h);
+    if (v) { try { return { path: mountOf(new URL(v, 'https://x').pathname) }; } catch (e) { } }
+  }
+  // Supabase does not forward the browser-visible path, and its own req.url has already had
+  // /functions/v1 stripped, so a sub-path mount cannot be discovered from inside: declare it.
+  const declared = env('SITE_BASE');
+  const host = req.headers.get('x-forwarded-host') || req.headers.get('host') || '';
+  const proto = req.headers.get('x-forwarded-proto') || 'https';
+  const seen = mountOf(new URL(req.url).pathname);
+  const path = mountOf(req.headers.get('x-forwarded-uri') || '') || mountOf(req.headers.get('x-forwarded-path') || '')
+    || (declared ? normaliseBase(declared) : (seen === SLUG ? '' : seen));
+  return { path, origin: host ? proto + '://' + host : '' };
+}
+const normaliseBase = (b) => {
+  const v = String(b || '').replace(/\/+$/, '');
+  return v === '' || v === '/' ? '' : (v[0] === '/' ? v : '/' + v);
+};
+// The mount is the longest leading path that ends at our slug, whether the gateway stripped it
+// or not: '/annotate/...', '/functions/v1/annotate/...', or '' for a root-mounted deploy.
+function mountOf(pathname) {
+  if (!pathname) return '';
+  const i = pathname.indexOf(SLUG);
+  if (i < 0) return '';
+  const end = i + SLUG.length;
+  if (pathname.length > end && pathname[end] !== '/') return '';   // '/annotatexyz' is not us
+  return pathname.slice(0, end);
+}
 
 const isPublic = (p) => PUBLIC.test(p);
 const isProtected = (p) => PROTECT.test(p);
@@ -125,8 +173,23 @@ Deno.serve(async (req) => {
   const ctx = {};
   const url = new URL(req.url);
   let p = decodeURIComponent(url.pathname);
+  // MOUNTING, in the form it actually arrives. Observed on this project: the browser calls
+  //   https://<ref>.supabase.co/functions/v1/annotate/task.html
+  // but the function's own req.url only carries the slug:
+  //   /annotate/task.html
+  // So the public base (/functions/v1/annotate) is NOT visible in req.url, and the two need
+  // different treatment:
+  //   · routing  -> strip a leading /<slug> here, whatever the host's gateway already did
+  //   · cookies  -> scope to the path the BROWSER sees, derived from the forwarded request, or a
+  //     cookie set at Path=/ on supabase.co would be shared with PostgREST and storage, and one
+  //     set at Path=/annotate would never be returned on a /functions/v1/annotate request.
+  if (p === SLUG || p === SLUG + '/') p = '/';
+  else if (p.startsWith(SLUG + '/')) p = p.slice(SLUG.length) || '/';
+  const external = externalBase(req);
+  const COOKIE_PATH = external.path || '/';   // '' on a root-mounted deploy (custom domain)
   if (p === '/') p = '/index.html';
-  if (!/\.[a-z0-9]+$/i.test(p)) p += '.html';
+  // NB: the ".html" convenience is applied further down, AFTER the extensionless API routes are
+  // matched. Appending it here rewrote /api/health to /api/health.html and every RPC 404'd.
 
   const cookieKey = (req.headers.get('cookie') || '').split(';').map((s) => s.trim())
     .filter((s) => s.indexOf(KEY_COOKIE + '=') === 0).map((s) => decodeURIComponent(s.slice(KEY_COOKIE.length + 1)))[0];
@@ -142,7 +205,11 @@ Deno.serve(async (req) => {
       status: 200,
       headers: {
         'content-type': 'application/json',
-        'set-cookie': KEY_COOKIE + '=' + encodeURIComponent(body.key) + '; Path=/; Max-Age=7776000; HttpOnly; SameSite=Lax'
+        // Path is the mount, not the host root: on Supabase this function IS the site, but it is
+        // mounted at /functions/v1/annotate, and a cookie scoped to "/" would also be sent to
+        // anything else ever served from the project domain (PostgREST, storage). Scope it.
+        'set-cookie': KEY_COOKIE + '=' + encodeURIComponent(body.key) + '; Path=' + COOKIE_PATH +
+          '; Max-Age=7776000; HttpOnly; SameSite=Lax'
       }
     });
   }
@@ -150,10 +217,6 @@ Deno.serve(async (req) => {
     const v = await verify(presented, req);
     return v.ok ? json(200, { label: v.label, until: v.until, mode: MODE }) : json(402, { error: v.error });
   }
-  if (p === '/api/health') {
-    return json(200, { ok: true, gate: 'on', backend: MODE, protected: 'server-side (402)', bucket: BUCKET });
-  }
-
   /* ---------- the lock ---------- */
   if (!presented || !(await verify(presented, req)).ok) {
     if (isProtected(p)) {
@@ -171,18 +234,67 @@ Deno.serve(async (req) => {
     }
     if (!isPublic(p)) {
       const nf = await fromBucket(ctx, '/404.html');
-      return new Response(nf.body, { status: 404, headers: { 'content-type': TYPES['.html'] } });
+      return new Response(nf.body, { status: 404, headers: { 'content-type': TYPES['.html'], 'cache-control': 'no-store' } });
     }
   }
 
   /* ---------- serve ---------- */
+  if (p === '/api/health') {
+    return json(200, {
+      ok: true, gate: 'on', backend: MODE, protected: 'server-side (402)',
+      bucket: BUCKET, build: BUILD, url: SUPABASE_URL ? 'configured' : 'MISSING',
+      service: SERVICE_KEY ? 'configured' : 'MISSING', anon: ANON_KEY ? 'configured' : 'MISSING'
+    });
+  }
+  // One diagnostic that answers "is the bucket reachable from in here?" from the inside, because
+  // a bucket read that fails and a router that mis-paths both look identical from the outside.
+  if (p === '/api/debug') {
+    const probe = '/css/app.css';
+    const target = SUPABASE_URL + '/storage/v1/object/authenticated/' + BUCKET + probe;
+    let bucket = {};
+    try {
+      const r = await fetch(target, { headers: { Authorization: 'Bearer ' + SERVICE_KEY } });
+      const t = await r.text();
+      bucket = { status: r.status, bytes: t.length, head: t.slice(0, 24) };
+    } catch (e) { bucket = { error: String(e && e.message || e) }; }
+    return json(200, {
+      pathname: new URL(req.url).pathname, probe: p, publicPath: isPublic(p), protectedPath: isProtected(p),
+      siteBase: env('SITE_BASE') || '(unset)', cookiePath: COOKIE_PATH,
+      baseWarning: !env('SITE_BASE') ? 'set the SITE_BASE secret to the browser-visible mount (e.g. /functions/v1/annotate) or unlock cookies will be scoped wrong on a sub-path deploy' : '',
+      bucketTarget: target.replace(/https:\/\/[^/]+/, '(origin)'), bucket,
+      types: { css: TYPES['.css'] || null }
+    });
+  }
+  // /task -> /task.html, but only for paths that will be looked up as files
+  if (!/\.[a-z0-9]+$/i.test(p) && p !== '/unlock' && p !== '/session' && !/^\/api(\/|$)/.test(p)) p += '.html';
+  // An extensionless path that reached here is not a page and not an RPC: answer plainly,
+  // without asking the bucket for a file that cannot exist.
+  if (!/\.[a-z0-9]+$/i.test(p)) return json(404, { error: 'No such route. Pages end in .html.' });
+
   const up = await fromBucket(ctx, p);
   if (!up.ok) {
-    const nf = await fromBucket(ctx, '/404.html');
-    return new Response(nf.body, { status: 404, headers: { 'content-type': TYPES['.html'] } });
+    // a missing asset stays a 404 with its own content type; only page paths get the styled page
+    if (/\.html$/.test(p)) {
+      const nf = await fromBucket(ctx, '/404.html');
+      return new Response(nf.body, { status: 404, headers: { 'content-type': TYPES['.html'], 'cache-control': 'no-store' } });
+    }
+    return new Response('not found', { status: up.status, headers: { 'content-type': 'text/plain', 'cache-control': 'no-store' } });   // never cache a miss
   }
+  // CACHING. This is a paywall decision, not a performance one, and getting it wrong is a leak:
+  // the first draft here gave every file under /css|/js|/assets a 5-minute TTL. /js/tasks.js is
+  // in /js AND is the paid corpus, so a buyer's authenticated 200 was cached by the CDN and then
+  // served to the NEXT visitor with no key at all — a paid file, from the cache, for free, for
+  // five minutes. The rule is therefore: anything PROTECT, and any page, is no-store; only a
+  // PUBLIC asset may be cached, and briefly, so a stale 404 during an upload cannot stick.
+  const cache = (!isProtected(p) && /^\/(?:css|js|assets)\//.test(p))
+    ? 'public, max-age=300, stale-while-revalidate=60'
+    : 'no-store';
   return new Response(up.body, {
     status: 200,
-    headers: { 'content-type': TYPES[p.slice(p.lastIndexOf('.'))] || 'application/octet-stream', 'cache-control': 'no-store' }
+    headers: {
+      'content-type': TYPES[p.slice(p.lastIndexOf('.'))] || 'application/octet-stream',
+      'cache-control': cache, etag: 'W/"' + BUCKET + p.length + '-' + (up.headers.get('x-upstream') || '') + '"',
+      'x-served-by': 'annotate-edge'
+    }
   });
 });

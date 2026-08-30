@@ -59,7 +59,41 @@ which I'd keep in function secrets, never in the repo.
 
 ---
 
+## What this project already has (so the setup steps above can be skipped)
+
+Supabase project `veecksfcnlpppzvplcyt` (`eu-west-1`) has the paywall installed and verified:
+`access_keys` / `app_config` / `unlock_attempts`, the `key_check` / `key_mint` / `key_attempt`
+RPCs, `ANNOTATE_SECRET` + `MINT_SECRET` in `app_config`, a **private** `site` bucket holding the
+30 site files, and the `annotate` edge function serving the whole gated site.
+
+    https://veecksfcnlpppzvplcyt.supabase.co/functions/v1/annotate/
+
+Function secrets: `ACCESS_MODE`, `SITE_BUCKET`, `PROJECT_URL`, `ANON_KEY`, `SERVICE_ROLE_KEY`,
+`SITE_BASE`. (Not named `SUPABASE_*` — the Supabase CLI refuses that prefix and would have
+deployed the function with no URL at all.) No Cloudflare project exists or is needed.
+
+Re-prove it any time, from the repo root:
+
+```bash
+SUPABASE_ACCESS_TOKEN=… node tools/verify-supabase.js                     # 22 checks: schema, grants, parity
+SUPABASE_ACCESS_TOKEN=… SUPABASE_SERVICE_KEY=… ANON_KEY=… \
+  node tools/verify-buyer-flow.js --mint                                  # 36 checks: stranger → unlock → revoke
+node tools/upload-site.js --check                                         # bucket equals this working tree
+```
+
+`MINT_SECRET` lives in the database and is not written into any tracked file. If you lose it, set
+a new one: `update public.app_config set value = '<new>' where key = 'MINT_SECRET';`
+
 ## Housekeeping, once, whatever you choose
+
+- **Rotate the Supabase access token you pasted in this chat** at
+  <https://supabase.com/dashboard/account/tokens>. It is the one that ran the migrations, set the
+  secrets, deployed the function and uploaded to your bucket — so it is a real, powerful token, and
+  it is readable in the conversation history. I kept it in `/home/user/.sb-token` (mode 600) and
+  never wrote it into the repo, but "pasted in chat" means "assume leaked". Revoking it does not
+  touch the deployment: the site does not use it.
+- **Rotate the pasted `ghp_…` GitHub token** too, and treat the `sb_secret_…` from earlier the same
+  way. Then, if you want me to change the site again, mint a fresh scoped token and paste that.
 
 - **Rotate the GitHub token you already pasted** (`ghp_…`) at
   <https://github.com/settings/tokens>. It worked, I used it for exactly two pushes and never

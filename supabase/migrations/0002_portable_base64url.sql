@@ -1,91 +1,37 @@
 -- ============================================================================
--- 0001 · The paywall backend: a real key store, revocation, and rate-limiting.
+-- 0002 · Repair for a database that already ran an EARLIER copy of 0001.
 --
--- Apply with either:
---   supabase db push                          (CLI)
---   Dashboard → SQL editor → paste → Run
---   POST /v1/projects/<ref>/database/query    (Management API)
+-- Read this first: 0001 is correct and idempotent, so a FRESH install only needs 0001.
+-- Skip this file unless your project was created from an older revision.
 --
--- Everything here is idempotent, so running it twice is safe. This migration is
--- OPTIONAL: tools/keygen.js with a local JSON ledger works for a launch. This is
--- the version where you can revoke a key mid-subscription and the buyer's next
--- request stops working. Both the Cloudflare Pages Function and the Supabase
--- Function call key_check() below, so no hosting provider ever stores your
--- signing secret.
+-- The block below is generated VERBATIM from 0001_paywall.sql by tools/gen-migrations.js.
+-- Do not hand-edit it — edit 0001 and run `node tools/gen-migrations.js`.
 --
--- Generated content is described in tools/gen-migrations.js; tests/sql-migration.js
--- checks this file against the servers so the two cannot drift.
+-- It exists because the first revision of 0001 carried four bugs that only a real Postgres
+-- can find, and every one of them failed silently from the buyer's side of the fence:
+--
+--   1. encode(bytea,'base64','u') — the three-argument form does not exist on the
+--      Postgres 17 Supabase ships. ERROR 42883, so key_check died instead of answering and
+--      the INSERT trigger rejected every key. public.key_sig() now builds base64url with
+--      replace() and truncates in Node's order, byte-identical to
+--      crypto.createHmac(...).digest('base64url').slice(0, 28).
+--   2. A plpgsql local named `key` inside a function that queries app_config (whose column
+--      is key) → ERROR 42702 ambiguous column. `where id = id` in key_mint had the same
+--      disease: a column compared with itself is always true, so the collision check never
+--      ran. Variables are now full_key / new_id and lookups say app_config.key.
+--   3. (p_days * 86400000)::bigint → ERROR 22003: int4 * int4 overflows BEFORE the cast can
+--      help. Now p_days::bigint * 86400000.
+--   4. key_check declared STABLE while ending in an UPDATE →
+--      ERROR 0A000 "UPDATE is not allowed in a non-volatile function". It is VOLATILE now.
+--
+-- Apply (Dashboard → SQL editor → paste → Run, or POST /v1/projects/<ref>/database/query),
+-- then prove it took — a JSON verdict, not an error, is the pass:
+--   select public.key_check('abcdefg','x',4102444800000);
+--     → {"ok": false, "error": "This key was not issued by this site."}
+--   select public.key_sig('abcdefg',4102444800000,'x');
+--     → a 28-character base64url string
 -- ============================================================================
 
--- pgcrypto lives in the "extensions" schema, which is NOT on search_path inside a
--- SECURITY DEFINER function, so every call below is schema-qualified
--- (extensions.hmac, extensions.gen_random_bytes).
-create extension if not exists pgcrypto with schema extensions;
-
--- --------------------------------------------------------------------------- key store
-create table if not exists public.access_keys (
-  id            text primary key,                    -- the 7-char public part the buyer pastes
-  sig           text,                                -- derived by key_fill() if you don't set it
-  label         text not null default 'customer',    -- who/what this was sold as
-  days          int  not null default 90,
-  exp_ms        bigint not null,                     -- epoch ms; mirrors the payload so an
-                                                     -- attacker cannot extend a key by editing it
-  expires_at    timestamptz generated always as (to_timestamp(exp_ms / 1000.0)) stored,
-  revoked_at    timestamptz,                         -- set this to cut access on the next request
-  created_at    timestamptz not null default now(),
-  note          text,
-  uses          int not null default 0,              -- successful checks: "is this key being shared?"
-  last_used_at  timestamptz,
-  constraint key_shape check (id ~ '^[A-Za-z0-9]{7}$' and exp_ms > 0)
-);
-comment on table public.access_keys is
-  'Who may load the corpus. A key stops working when revoked_at is set or exp_ms passes.';
-
--- --------------------------------------------------------------------------- configuration
--- Secrets live here rather than in a hosting-provider secret store, so the edge code
--- only ever needs the project URL and the anon key (both public). Unreadable over HTTP:
--- RLS gives nobody a policy on this table, and every reader is SECURITY DEFINER.
-create table if not exists public.app_config (
-  key   text primary key,
-  value text not null
-);
-
-insert into public.app_config (key, value) values
-  ('ANNOTATE_SECRET', 'NOT_SET'),   -- shared with tools/keygen.js: copy data/.secret here
-  ('MINT_SECRET',     'NOT_SET')    -- only the service role needs it; lets you mint over HTTP
-on conflict (key) do nothing;
-
--- --------------------------------------------------------------------------- abuse ledger
--- The gate logs every refusal with a coarse client fingerprint, so "one key shared by
--- forty people" is a query instead of a suspicion.
-create table if not exists public.unlock_attempts (
-  id       bigint generated always as identity primary key,
-  at       timestamptz not null default now(),
-  fp       text,                       -- "ip|ua" pair, truncated; not a cookie, not personal
-  key_id   text,
-  ok       boolean not null,
-  ip       text generated always as (split_part(fp, '|', 1)) stored,
-  country  text,                       -- fill from cf-ipcountry if you are behind Cloudflare
-  ua       text generated always as (nullif(split_part(fp, '|', 2), '')) stored
-);
-create index if not exists unlock_recent on public.unlock_attempts (at desc, fp);
-
--- --------------------------------------------------------------------------- row level security
-alter table public.access_keys     enable row level security;
-alter table public.app_config      enable row level security;
-alter table public.unlock_attempts enable row level security;
--- No policies on purpose: anon/authenticated reach these tables only through the
--- SECURITY DEFINER functions below, never through PostgREST directly.
-
--- RLS alone is not the whole answer: policies stop a SELECT, but a role that still holds
--- table privileges can be a problem the moment someone adds a permissive policy or runs as
--- the table owner. Belt AND braces, and this is what makes `select * from access_keys` over
--- PostgREST a 401 rather than a slow no.
-revoke all on all tables in schema public from anon, authenticated;
-revoke all on all sequences in schema public from anon, authenticated;
-revoke all on table public.app_config from anon, authenticated;
-revoke all on table public.access_keys from anon, authenticated;
-revoke all on table public.unlock_attempts from anon, authenticated;
 -- The three RPCs are the entire public surface. key_mint is deliberately NOT granted:
 -- revocation and minting stay behind the service role.
 
@@ -111,6 +57,7 @@ as $$
       '+', '-'), '/', '_'), '=', ''),
       28);
 $$;
+
 comment on function public.key_sig(text, bigint, text) is
   'HMAC-SHA256 -> base64url, 28 chars. Byte-identical to tools/keygen.js signature().';
 
@@ -144,6 +91,7 @@ end
 $$;
 
 drop trigger if exists key_fill on public.access_keys;
+
 create trigger key_fill before insert on public.access_keys
   for each row execute function public.key_fill();
 
@@ -198,19 +146,25 @@ begin
   return jsonb_build_object('ok', true, 'label', r.label, 'until', to_char(r.expires_at, 'YYYY-MM-DD'));
 end
 $$;
+
 -- EVERY function is revoked from PUBLIC first, then granted back one at a time. Postgres grants
 -- EXECUTE on new functions to PUBLIC by default, so without this the list of callable RPCs is
 -- "whatever exists" instead of "key_check and key_attempt". That mostly costs you a confusing
 -- /rpc/ surface, but a SECURITY DEFINER trigger function like key_fill() being callable directly
 -- is exactly the kind of thing that turns a small mistake into a real one.
 revoke execute on function public.key_sig(text, bigint, text) from public, anon, authenticated;
+
 revoke execute on function public.key_fill() from public, anon, authenticated;
+
 revoke execute on function public.key_mint(text, text, int) from public, anon, authenticated;
+
 revoke execute on function public.key_check(text, text, bigint) from public, anon, authenticated;
+
 revoke execute on function public.key_attempt(text, text, boolean) from public, anon, authenticated;
 
 comment on function public.key_check(text, text, bigint) is
   'Verify an access key against the ledger. Returns {ok,label,until} or {ok:false,error}.';
+
 grant execute on function public.key_check(text, text, bigint) to anon, authenticated;
 
 -- The hit counter is a side effect, so key_attempt is VOLATILE by necessity — do not
@@ -231,6 +185,7 @@ begin
   return jsonb_build_object('attempts_5m', n, 'throttled', n > 20);
 end
 $$;
+
 grant execute on function public.key_attempt(text, text, boolean) to anon, authenticated;
 
 -- Minting is an HTTP call: insert the row, read the key back. SECURITY DEFINER, and
@@ -278,14 +233,7 @@ begin
     'until', to_char(to_timestamp(exp / 1000.0), 'YYYY-MM-DD'));
 end
 $$;
-revoke all on function public.key_mint(text, text, int) from public, anon, authenticated;
-comment on function public.key_mint(text, text, int) is 'Mint a key. Service-role only, guarded by MINT_SECRET.';
 
--- --------------------------------------------------------------------------- smoke test
--- Run this after step 2 of SETUP.md; a JSON verdict (not an error) means the gate works:
---   select public.key_check('abcdefg', 'x', 4102444800000);
---     → {"ok": false, "error": "This key was not issued by this site."}
---   select public.key_sig('abcdefg', 4102444800000, 'x');
---     → a 28-character base64url string
--- Mint one for yourself and use it as a buyer:
---   select public.key_mint('<MINT_SECRET>', 'self', 30);
+revoke all on function public.key_mint(text, text, int) from public, anon, authenticated;
+
+comment on function public.key_mint(text, text, int) is 'Mint a key. Service-role only, guarded by MINT_SECRET.';

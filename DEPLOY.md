@@ -4,6 +4,18 @@ Three setups, cheapest first. Take **A** unless you already know why you need B.
 
 ---
 
+## Which one, honestly
+
+If your Supabase project already has the migration applied (it does — `key_check`, `key_mint`
+and the key table are live), then **Option A2 below is the whole deployment**: the edge function
+serves the files and enforces the lock, and the database decides who gets in. There is no second
+account to open, no `_headers` file to get wrong, and no signing secret on a third-party host.
+
+Cloudflare is *not* needed to make the paywall work. It was kept in the plan for two conveniences
+only: a `pages.dev` subdomain you can hand people, and a custom domain you may already own. If
+you want either, use A. If you do not, deploy A2 and skip A entirely — nothing in the repo
+depends on Cloudflare at runtime.
+
 ## A · Cloudflare Pages + one function — free, no server to keep alive
 
 This is the recommended path: the lock is enforced *at the edge*, so protected files are never
@@ -108,6 +120,27 @@ are already wired to read those two constants.
 
 ---
 
+## A CDN in front of a paywall is a leak until you say otherwise
+
+`cache-control` is not cosmetic here. An early version of the Supabase function gave every file
+under `/css`, `/js`, `/assets` a five-minute public TTL. `/js/tasks.js` is the paid corpus *and*
+lives under `/js`, so one buyer's authenticated `200` was cached at the edge and then handed to
+the next stranger for free — and it also poisoned that URL for five minutes in the other
+direction (a stale `402` on `/css/app.css` after the file existed).
+
+The rule, enforced in `supabase/functions/annotate/index.ts` and asserted by the live test:
+
+| response | cache-control |
+|---|---|
+| 200 on any `PROTECT` path | `no-store` |
+| 200 on a `PUBLIC` asset (`/css`, `/js`, `/assets`) | `public, max-age=300, stale-while-revalidate=60` |
+| 200 on a page | `no-store` |
+| 402, 404, `/unlock`, `/session` | `no-store` |
+
+Two minutes of stale CSS is an annoyance; five minutes of free corpus is a refund. If you touch
+these headers, run the sequence: **fetch with a key → fetch the same URL without one → the second
+must still be 402.**
+
 ## If the paywall serves everything anyway (read this before anything else)
 
 Both locks in this repo are driven by one list — the `PUBLIC` / `PROTECT` regex pair, shared
@@ -124,7 +157,26 @@ Symptoms: `curl -I https://yoursite/task.html` returns **200** with no key (open
 pages render unstyled because `/css/app.css` got locked out (over-tight). `node tests/verify.js`
 checks the classification of 28 specific paths; run it after any edit to either list.
 
-## Option A2 · All-Supabase (one free tier, keys in Postgres)
+## Option A2 · All-Supabase (one free tier, keys in Postgres) — **recommended**
+
+Already deployed for this project, so these are the commands that ran, not a sketch:
+
+```bash
+# 1 · the schema, three idempotent files, any order
+#     0001 fresh install · 0002 repairs an older 0001 · 0003 adds columns an old table lacks
+# 2 · a private bucket called "site", with the 30 site files in it
+# 3 · the function + six secrets, incl. SITE_BASE=/functions/v1/annotate
+npx supabase@latest functions deploy annotate --no-verify-jwt
+
+F=https://veecksfcnlpppzvplcyt.supabase.co/functions/v1/annotate
+curl -s  $F/api/health          # {"ok":true,...,"build":"annotate-2026-08-30.2"}
+curl -sI $F/guide.html | head -1 # 200  free
+curl -sI $F/task.html  | head -1 # 402  LOCKED: the bytes never leave without a key
+curl -sI $F/js/tasks.js | head -1# 402  the 39 KB corpus, 94-byte stub in its place
+```
+
+Full step-by-step, including the `curl` upload loop and why the secrets are not called
+`SUPABASE_*`: `supabase/SETUP.md` §3a.
 
 If you would rather not have a Cloudflare project either: `supabase/SETUP.md` runs the whole
 site from an Edge Function that serves a **private** storage bucket, and validates keys against

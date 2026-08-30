@@ -49,6 +49,47 @@ It also includes:
 Using this to *learn* the work is exactly what it's for. Using it to make someone believe
 they've been hired by a real company is not, and the app has no features that would help.
 
+## It is live now (this project)
+
+```
+https://veecksfcnlpppzvplcyt.supabase.co/functions/v1/annotate/
+```
+
+That URL *is* the whole site — Supabase serves it from a private bucket and enforces the lock at
+the edge; there is no other server to keep alive, and no Cloudflare project involved.
+
+```bash
+F=https://veecksfcnlpppzvplcyt.supabase.co/functions/v1/annotate
+curl -s  $F/api/health          # {"ok":true,"gate":"on","backend":"postgres","build":"annotate-2026-08-30.2",…}
+curl -sI $F/guide.html | head -1 # 200  free: the guide, catalogue, pricing, unlock page
+curl -sI $F/task.html  | head -1 # 402  LOCKED — the bytes never leave without a key
+curl -sI $F/js/tasks.js | head -1# 402  the 39 KB corpus, a 94-byte stub in its place
+```
+
+Open `$F/index.html` in a browser, go to **Unlock**, and paste a key from
+`node tools/keygen.js new --label "test" --days 30`. That key is real: it is checked against the
+`access_keys` table in your Supabase project, so it can be revoked from the database and stops
+working on the buyer's next request.
+
+Mint straight over HTTP (this is what a payment webhook will call, once you wire one up):
+
+```bash
+curl -s -X POST $PROJECT_URL/rest/v1/rpc/key_mint \
+  -H "apikey: $SERVICE_ROLE_KEY" -H "Authorization: Bearer $SERVICE_ROLE_KEY" \
+  -H 'content-type: application/json' \
+  -d '{"p_mint_secret":"'$MINT_SECRET'","p_label":"Ada C. · Paystack ref 4412","p_days":90}'
+# → {"key":"<id>.<sig>.<expMs>", "id":"…", "until":"…"}   paste that string into the receipt
+```
+
+Prove the whole thing again, end to end, any time:
+
+```bash
+SUPABASE_ACCESS_TOKEN=… node tools/verify-supabase.js      # 22 checks: schema, grants, signature parity, revoke
+SUPABASE_ACCESS_TOKEN=… SUPABASE_SERVICE_KEY=… ANON_KEY=… \
+  node tools/verify-buyer-flow.js --mint                   # 36 checks: stranger → gate → unlock → revoke
+node tools/upload-site.js --check                          # the bucket equals this working tree
+```
+
 ## Two ways to run it
 
 | | what you get |
@@ -87,7 +128,20 @@ ACCESS.md                                 # the minimum tokens to hand an agent,
 
 `deploy/cloudflare-pages-function.js` can use that same database, in which case Cloudflare
 stores **no secret at all** and `node --experimental-vm-modules tests/edge-function.js` proves the
-lock (23 checks) by importing the real function against a stubbed PostgREST.
+lock (33 checks, including how the function behaves behind Supabase's `/functions/v1/<slug>`
+mount) by importing the real function against a stubbed PostgREST.
+
+Three things to know if you read or extend the SQL, because each one cost a real debugging loop:
+
+- `supabase/migrations/0001_paywall.sql` is the source of truth. `0002` (function repair) and
+  `0003` (column repair, because `create table if not exists` never upgrades an existing table)
+  are **generated** from it: edit 0001, run `node tools/gen-migrations.js`, and
+  `tests/sql-migration.js` fails if you forget.
+- Two different env-var vocabularies are deliberate. The Supabase CLI rejects secret names
+  beginning with `SUPABASE_`, so the *edge function* reads `PROJECT_URL` / `ANON_KEY`; Cloudflare
+  Pages has no such rule, so the *Pages function* reads `SUPABASE_URL` / `SUPABASE_ANON_KEY`.
+- `cache-control` is a paywall setting. Anything protected is `no-store`; caching a
+  key-bearing `200` on `/js/tasks.js` would give the corpus away to the next stranger.
 
 ## Run the checks
 
@@ -110,12 +164,21 @@ forged signature refused, an expired key refused, and revocation taking effect o
 request. Client-side, it loads `queue.html` with a key in storage and asserts the content only
 appears for a server-verified session.
 
-Last run: **262 assertions, 0 failures** (`node tests/verify.js`) — 8 task types, 13 pages,
-the paywall (live server boot), and the boundary checks.
+Last run: **276 assertions, 0 failures** (`node tests/verify.js`) — 8 task types, 13 pages, the
+paywall (live `server.js` boot), `tests/edge-function.js` (33 checks, importing the real Cloudflare
+function against a stubbed PostgREST), `tests/sql-migration.js` (54 checks over the three
+migration files) and the boundary checks. Against the deployed project, `tools/verify-supabase.js`
+(22) and `tools/verify-buyer-flow.js` (36) re-run the same claims against real Postgres and the
+live URL; they need a token in the environment and are not part of the offline suite.
 
 ## Structure
 
 ```
+tools/keygen.js      mint / list / verify / revoke keys; --sql prints an INSERT for Postgres
+tools/gen-migrations.js  regenerates 0002 + 0003 from 0001 (0001 is the only file you edit)
+tools/verify-supabase.js  live proof that the database half is really installed
+tools/verify-buyer-flow.js  live proof of the lock, through the deployed URL
+tools/upload-site.js  pushes the site into the private bucket and proves the bucket is private
 server.js          zero-dependency node http server + /api submissions
 index.html         landing
 onboarding.html    timed qualification assessment (the unpaid 3 hours)

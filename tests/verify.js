@@ -584,6 +584,46 @@ async function readyKeyed(url, key) {
       out.split('\n').filter((l) => /\u2717|Error/.test(l)).slice(0, 3).join(' | ') || 'exit ' + t.status);
   }
 
+  console.log('\n\u250c\u2500 the live-deploy tools, and the two rules they exist to protect');
+  {
+    const tool = (n) => { try { return fs.readFileSync(path.join(ROOT, 'tools', n), 'utf8'); } catch (e) { return ''; } };
+    const api = tool('supabase-api.js');
+    need(api.includes('SUPABASE_ACCESS_TOKEN') && /never print|No value is ever printed/i.test(fs.readFileSync(path.join(ROOT, 'tools/supabase-api.js'), 'utf8')),
+      'tools/supabase-api.js needs a token from the environment and does not print it', 'token handling changed');
+    for (const n of ['verify-supabase.js', 'verify-buyer-flow.js', 'upload-site.js']) {
+      const t = tool(n);
+      need(t.length > 1500 && !/readFileSync\('(\/home\/user|~)/.test(t) && !/sb_secret_|ghp_|eyJhbGciOi/.test(t),
+        n + ' is self-contained, credential-free, and reads secrets only from env/HOME', 'hardcoded path or secret');
+      need(/process\.exit\(1\)|fails?\.push|A\.ok\(/.test(t), n + ' fails loudly instead of skipping', 'silent pass');
+    }
+    // The rule that caused a real leak: a key-bearing 200 on a protected file must not be cacheable.
+    const sfb = fs.readFileSync(path.join(ROOT, 'supabase/functions/annotate/index.ts'), 'utf8');
+    need(/isProtected\(p\)[\s\S]{0,160}no-store/.test(sfb) || /no-store[\s\S]{0,240}isProtected/.test(sfb),
+      'the edge function caches only PUBLIC assets (a max-age on a protected 200 is a paywall leak)', 'cache rule lost');
+    need(!/max-age=\d+/.test((/const cache =[\s\S]{0,220}/.exec(sfb) || [''])[0].replace(/\/\*[\s\S]*?\*\//g, '')) || /isProtected/.test((/const cache =[\s\S]{0,220}/.exec(sfb) || [''])[0]),
+      'that rule is expressed as one expression, not scattered across branches', 'rule fragmented');
+    // and the cookie rule: scoped to the mount a browser calls, or unlocking appears to work and does not
+    need(/COOKIE_PATH/.test(sfb) && /Path=' \+ COOKIE_PATH/.test(sfb),
+      'the unlock cookie is scoped to the deployed mount, not bare /', 'cookie path rule lost');
+    // env-name split, which the CLI forces
+    need(/PROJECT_URL/.test(sfb) && !/const SUPABASE_URL = Deno\.env\.get\('SUPABASE_URL'\)/.test(sfb),
+      'the edge function reads CLI-legal secret names (PROJECT_URL/ANON_KEY); Pages keeps SUPABASE_*', 'name split broken');
+    const qs = fs.readFileSync(path.join(ROOT, 'QUICKSTART.md'), 'utf8');
+    need(/functions\/v1\/annotate/.test(qs) && /402/.test(qs) && /curl -sI/.test(qs),
+      'QUICKSTART leads with the live URL and the curl that proves the lock', 'live section lost');
+  }
+
+  console.log('\n\u250c\u2500 supabase/migrations/*.sql (the paywall database half)');
+  {
+    const { spawnSync } = require('child_process');
+    const m = spawnSync(process.execPath, [path.join(ROOT, 'tests/sql-migration.js')],
+      { cwd: ROOT, encoding: 'utf8', timeout: 120000 });
+    const out = (m.stdout || '') + (m.stderr || '');
+    const n = (out.match(/\u2713/g) || []).length;
+    need(m.status === 0, 'sql-migration harness: ' + n + ' checks green (balanced quoting, no 42883/42702/22003/0A000 shapes, generated repairs in sync)',
+      out.split('\n').filter((l) => /\u2717|Error/.test(l)).slice(0, 3).join(' | ') || 'exit ' + m.status);
+  }
+
   console.log('\n\u250c\u2500 boundaries: what this site refuses to be');
   {
     const files = fs.readdirSync(ROOT).filter((f) => f.endsWith('.html'))

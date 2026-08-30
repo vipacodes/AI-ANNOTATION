@@ -1,5 +1,46 @@
 # Quick start — view it, then take it live
 
+## It is live now (this project)
+
+```
+https://veecksfcnlpppzvplcyt.supabase.co/functions/v1/annotate/
+```
+
+That URL *is* the whole site — Supabase serves it from a private bucket and enforces the lock at
+the edge; there is no other server to keep alive, and no Cloudflare project involved.
+
+```bash
+F=https://veecksfcnlpppzvplcyt.supabase.co/functions/v1/annotate
+curl -s  $F/api/health          # {"ok":true,"gate":"on","backend":"postgres","build":"annotate-2026-08-30.2",…}
+curl -sI $F/guide.html | head -1 # 200  free: the guide, catalogue, pricing, unlock page
+curl -sI $F/task.html  | head -1 # 402  LOCKED — the bytes never leave without a key
+curl -sI $F/js/tasks.js | head -1# 402  the 39 KB corpus, a 94-byte stub in its place
+```
+
+Open `$F/index.html` in a browser, go to **Unlock**, and paste a key from
+`node tools/keygen.js new --label "test" --days 30`. That key is real: it is checked against the
+`access_keys` table in your Supabase project, so it can be revoked from the database and stops
+working on the buyer's next request.
+
+Mint straight over HTTP (this is what a payment webhook will call, once you wire one up):
+
+```bash
+curl -s -X POST $PROJECT_URL/rest/v1/rpc/key_mint \
+  -H "apikey: $SERVICE_ROLE_KEY" -H "Authorization: Bearer $SERVICE_ROLE_KEY" \
+  -H 'content-type: application/json' \
+  -d '{"p_mint_secret":"'$MINT_SECRET'","p_label":"Ada C. · Paystack ref 4412","p_days":90}'
+# → {"key":"<id>.<sig>.<expMs>", "id":"…", "until":"…"}   paste that string into the receipt
+```
+
+Prove the whole thing again, end to end, any time:
+
+```bash
+SUPABASE_ACCESS_TOKEN=… node tools/verify-supabase.js      # 22 checks: schema, grants, signature parity, revoke
+SUPABASE_ACCESS_TOKEN=… SUPABASE_SERVICE_KEY=… ANON_KEY=… \
+  node tools/verify-buyer-flow.js --mint                   # 36 checks: stranger → gate → unlock → revoke
+node tools/upload-site.js --check                          # the bucket equals this working tree
+```
+
 ## Right now, inside this workspace
 
 The server is already running on port 4173, so open the **live preview** in this app
@@ -18,8 +59,10 @@ Mint one any time with
 
 Run the checks whenever you touch anything:
 ```bash
-node tests/verify.js                 # 262 assertions, incl. a live boot of server.js + the gate
-node --experimental-vm-modules tests/edge-function.js   # the Cloudflare function, for real
+node tests/verify.js                 # 264 assertions: pages, grading, persistence, the gate,
+                                      #   the Cloudflare function, and the SQL migrations
+node --experimental-vm-modules tests/edge-function.js   # the Pages + Supabase functions, for real (33)
+node tests/sql-migration.js          # the migration files, against the shapes Postgres rejects (54)
 ```
 
 ---
@@ -43,7 +86,11 @@ runs on your laptop. **But the moment you close the laptop, it dies** — so use
 
 ## Live properly, free, forever (recommended)
 
-Follow **`DEPLOY.md`**, path A. Short version:
+Follow **`DEPLOY.md`**. There are two real options and the recommendation has changed now that
+the Supabase project exists: **path A2 (Supabase only)** needs no second account and stores no
+signing secret anywhere outside the database; **path A (Cloudflare Pages)** only buys you a
+`pages.dev` subdomain or a custom domain you already own. Both are documented; the deployment
+above is A2. Short version for A:
 
 ```bash
 cd annotation-trainer
