@@ -26,8 +26,31 @@ const path = require('path');
 const ROOT = process.env.ANNOTATE_DEPLOY_ROOT || path.join(__dirname, '..');
 const FN = path.join(ROOT, 'deploy/cloudflare-pages-function.js');
 
-/** Evaluate the gate module and return its onRequest. */
-function loadGate() {
+/**
+ * Evaluate the gate module and return its onRequest.
+ *
+ * The naive version — readFileSync + new Function — is what 500'd every request on Vercel. Vercel's
+ * Node builder BUNDLES a function (it emits .vercel/output/function/index.js containing api/index.js
+ * and its statically-traceable requires, nothing else), so `__dirname/../deploy/…js` is simply not a
+ * path that exists at runtime. Locally it always worked, because locally the repo is the filesystem.
+ * Three routes, tried in order, so this holds under a bundler, under serverless-with-the-repo-present,
+ * and under a hand-rolled deploy:
+ *   1. a real module import, which the bundler can see and inline
+ *   2. a plain require of the compiled sibling, same reason
+ *   3. the file read, kept for the dev server and for runtimes that ship the tree verbatim
+ */
+async function loadGate() {
+  const here = path.join(__dirname, 'gate-entry.js');
+  if (fs.existsSync(here)) {
+    try {
+      const m = await import('./gate-entry.js');
+      if (m && (m.onRequest || m.default)) return m.onRequest || m.default;
+    } catch (e) { storeErr('gate-entry import: ' + e.message); }
+    try {
+      const m = require('./gate-entry.js');
+      if (m && (m.onRequest || m.default)) return m.onRequest || m.default;
+    } catch (e) { storeErr('gate-entry require: ' + e.message); }
+  }
   const src = fs.readFileSync(FN, 'utf8').replace(/^export\s+async\s+function\s+onRequest/m, 'async function onRequest');
   // The Cloudflare file reads config as `globalThis.env.X`; on Vercel's Node runtime that is
   // process.env. One assignment, and the gate's own precedence (env wins, else the live project URL)
@@ -139,4 +162,7 @@ function makeFetch(baseOrigin) {
   };
 }
 
-module.exports = { loadGate, originalPath, nextHandler, makeFetch, TYPES, ROOT, PREFIX };
+const LOAD_ERRORS = [];
+function storeErr(m) { LOAD_ERRORS.push(m); }
+
+module.exports = { loadGate, originalPath, nextHandler, makeFetch, TYPES, ROOT, PREFIX, LOAD_ERRORS };

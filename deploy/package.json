@@ -1,0 +1,10 @@
+{
+  "name": "annotate-trainer-gate",
+  "private": true,
+  "type": "module",
+  "main": "gate-entry.js",
+  "exports": {
+    ".": "./gate-entry.js",
+    "./cf": "./cloudflare-pages-function.js"
+  }
+}

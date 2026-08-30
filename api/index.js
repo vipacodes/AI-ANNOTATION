@@ -15,7 +15,15 @@
 'use strict';
 const { loadGate, nextHandler, makeFetch } = require('./_gate.js');
 
-const onRequest = loadGate();
+// loadGate is async: it may resolve the gate through a dynamic import (the only route a bundler can
+// follow), and awaiting it once at module load keeps the request path synchronous.
+let onRequest = null;
+const ready = loadGate().then((fn) => { onRequest = fn; return fn; }, (e) => {
+  // Never let a rejected import take the process down: the handler below turns this into a 500 with
+  // the reason, which is diagnosable, where an unhandled rejection is just "FUNCTION_INVOCATION_FAILED".
+  console.error('[gate] load failed:', e && e.stack || e);
+  return null;
+});
 
 module.exports = async function vercelHandler(req, res) {
   try {
@@ -46,6 +54,11 @@ module.exports = async function vercelHandler(req, res) {
         status: r.status, headers: { 'content-type': r.type, 'cache-control': r.cache || 'no-store' }
       });
     };
+    if (!onRequest) await ready;
+    if (!onRequest) {
+      res.statusCode = 503; res.setHeader('content-type', 'application/json; charset=utf-8'); res.setHeader('cache-control', 'no-store');
+      return res.end(JSON.stringify({ error: 'Gate failed to load on this runtime; nothing served.' }));
+    }
     const response = await onRequest({ request, env: process.env, next, fetch: makeFetch(proto + '://' + host) });
     if (!response || typeof response.status !== 'number') {
       // Never fall open. If the gate returns something unrecognised, answer 500 rather than letting
