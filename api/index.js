@@ -13,7 +13,7 @@
                          503/402 rather than opening, which is the correct failure
      SITE_BASE           leave unset at a Vercel root mount */
 'use strict';
-const { loadGate, nextHandler, makeFetch } = require('./_gate.js');
+const { loadGate, nextHandler, makeFetch, GATE_BUILD } = require('./_gate.js');
 
 // loadGate is async: it may resolve the gate through a dynamic import (the only route a bundler can
 // follow), and awaiting it once at module load keeps the request path synchronous.
@@ -50,9 +50,11 @@ module.exports = async function vercelHandler(req, res) {
     // into a 500 the first time this ran.
     const next = async () => {
       const r = await nextHandler({ url: path, headers: { 'x-invoke-path': path } }, request);
-      return new Response(r.body, {
-        status: r.status, headers: { 'content-type': r.type, 'cache-control': r.cache || 'no-store' }
-      });
+      // x-annotate-build is the "which artifact is this" header; it is deliberately on every reply from
+      // nextHandler (the 402s and the mirrored 200s), which is exactly the set of paths I can only
+      // observe from outside. No secret, no version of anything the owner has to keep private.
+      const h = { 'content-type': r.type, 'cache-control': r.cache || 'no-store', 'x-annotate-build': GATE_BUILD };
+      return new Response(r.body, { status: r.status, headers: h });
     };
     if (!onRequest) await ready;
     if (!onRequest) {
@@ -67,6 +69,10 @@ module.exports = async function vercelHandler(req, res) {
       return res.end(JSON.stringify({ error: 'Gate returned no response; nothing served.' }));
     }
 
+    // Stamped on EVERY reply the function produces, because the .html 402 is assembled inside the gate
+    // (its context.fetch of gate.html) and therefore never passes through nextHandler — a header set
+    // only there was missing from exactly the response I needed to identify.
+    try { res.setHeader('x-annotate-build', GATE_BUILD); } catch (e) { /* headers already sent: nothing to do */ }
     res.statusCode = response.status;
     response.headers.forEach((v, k) => res.setHeader(k, v));
     if (response.body) {

@@ -33,6 +33,13 @@ const path = require('path');
 // A paywall whose behaviour depends on module-loading trivia is not a paywall.
 globalThis.env = Object.assign({}, process.env);
 
+/* What the deployed artifact IS, readable from a curl. This exists because diagnosing Vercel with a
+   project-scoped token means no runtime logs and no file listing: the only instrument left is behaviour,
+   and "the gate is still answering from gate-fallback.html although the ordering fix is committed" was
+   unanswerable without something inside the artifact that reports itself. Bump it with any change to the
+   gate plumbing; tests and docs then have a string to assert on instead of a guess. */
+const GATE_BUILD = 'vercel-gate-2026-08-30.2';
+
 const ROOT = process.env.ANNOTATE_DEPLOY_ROOT || path.join(__dirname, '..');
 const FN = path.join(ROOT, 'deploy/cloudflare-pages-function.js');
 
@@ -226,7 +233,7 @@ async function nextHandler(request, srcReq) {
       const m = await fromMirror(rel, srcReq);
       if (m) return m;
     }
-    return { status: 402, body: gateScreen(rel), type: TYPES['.html'], cache: 'no-store' };
+    return { status: 402, body: gateScreen(rel), type: TYPES['.html'], cache: 'no-store', build: GATE_BUILD };
   }
   if (!file) {
     const nf = path.join(ROOT, '404.html');
@@ -273,4 +280,4 @@ function makeFetch(baseOrigin) {
 const LOAD_ERRORS = [];
 function storeErr(m) { LOAD_ERRORS.push(m); }
 
-module.exports = { EMBED_GATE, EMBED_404, EMBED_SCREEN, gateScreen, loadGate, originalPath, nextHandler, fromMirror, MIRROR_ORIGIN, makeFetch, TYPES, ROOT, PREFIX, LOAD_ERRORS };
+module.exports = { GATE_BUILD, EMBED_GATE, EMBED_404, EMBED_SCREEN, gateScreen, loadGate, originalPath, nextHandler, fromMirror, MIRROR_ORIGIN, makeFetch, TYPES, ROOT, PREFIX, LOAD_ERRORS };

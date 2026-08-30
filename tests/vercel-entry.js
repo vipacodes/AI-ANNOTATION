@@ -153,6 +153,20 @@ const get = (p, opts) => new Promise((resolve, reject) => {
   }
 
   console.log('\n\u250c\u2500 the Vercel entry point (api/index.js, loaded for real)');
+  // Which artifact answered, readable from outside. Without this, a deployment that quietly keeps
+  // serving an older gate is indistinguishable from one where your fix is live but the code path never
+  // runs — which is exactly how an ordering change looked in production for a whole round trip.
+  {
+    const hb = await get('/index.html');
+    need(/^vercel-gate-\d{4}-\d{2}-\d{2}\.\d+$/.test(hb.headers['x-annotate-build'] || ''),
+      'x-annotate-build identifies the artifact on a free page', hb.headers['x-annotate-build']);
+    const h4 = await get('/task.html');
+    need(h4.headers['x-annotate-build'] === hb.headers['x-annotate-build'],
+      'and on the 402 too, which the gate assembles itself and never passes through nextHandler',
+      String(h4.headers['x-annotate-build']));
+    need(/vercel-gate-/.test(fs.readFileSync(path.join(ROOT, 'api/_gate.js'), 'utf8')),
+      'GATE_BUILD lives in the module the adapter and the gate share (one place to bump)');
+  }
   let r = await get('/index.html');
   need(r.status === 200 && /AnnotateTrainer/.test(r.body), 'a free page is served through the function', r.status + ' ' + r.body.slice(0, 60));
   need(/charset=utf-8/.test(r.headers['content-type'] || ''), 'content-type carries the charset (the mojibake class of bug)', r.headers['content-type']);

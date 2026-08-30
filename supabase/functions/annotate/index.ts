@@ -42,7 +42,7 @@ const ANON_KEY = env('ANON_KEY') || env('SUPABASE_ANON_KEY') || env('PUBLISHABLE
 // into a curl. It earned its place: Supabase accepted two deploys in a row while the worker kept
 // serving the previous build, so a route I had just added looked like it was missing from the code.
 // Every "that cannot happen" debugging loop in this file started with a stale build marker.
-const BUILD = 'annotate-2026-08-30.8';
+const BUILD = 'annotate-2026-08-30.9';
 
 const KEY_RE = /^([A-Za-z0-9]{6,10})\.([A-Za-z0-9_\-]{20,})\.(\d{10,13})$/;
 const KEY_COOKIE = 'at_key';
@@ -254,10 +254,11 @@ a{color:#8b7cff}</style></head><body><div class="card">
 <p id="m" style="font-size:12px;min-height:18px;color:#6d7c92"></p>
 <p style="font-size:12.5px;color:#93a0b4"><a href="/gate.html">Full unlock page</a> · <a href="/buy.html">Pricing</a></p>
 </div><script>
+var __GATE_TARGET=/*@@GATE_PATH@@*/'';
 var go=function(){var k=document.getElementById('k').value.trim();var m=document.getElementById('m');m.textContent='checking\\u2026';
 fetch('/unlock',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({key:k})}).then(function(r){return r.json().then(function(j){return{c:r.status,j:j}})}).then(function(r){
 m.style.color=r.c===200?'#57d38b':'#ff6b6b';m.textContent=r.c===200?('Accepted - '+(r.j.label||'')+(', valid until '+(r.j.until||''))):(r.j.error||'Key rejected.');
-if(r.c===200)setTimeout(function(){location.reload()},700);});};
+if(r.c===200)setTimeout(function(){if(__GATE_TARGET)location.href=__GATE_TARGET;else location.reload()},700);});};
 document.getElementById('go').onclick=go;document.getElementById('k').addEventListener('keydown',function(e){if(e.key==='Enter')go()});
 </script></body></html>`;
 
@@ -742,7 +743,16 @@ Deno.serve(async (req) => {
         return new Response(stub, { status: 402, headers: { 'content-type': TYPES['.js'], 'cache-control': 'no-store' } });
       }
       if (/\.html$/.test(p)) {
-        return new Response(GATE_HTML, { status: 402, headers: { 'content-type': TYPES['.html'], 'cache-control': 'no-store' } });
+        // Rendered, not copied: the buyer who unlocks from here should land on the page they were
+        // locked out of, not on the front page. Same sentinel as gate.html and server.js, same
+        // replace-on-either-shape rule, so one edit cannot leave one host stamping and another not.
+        // The path is sanitised down to ^/[\w./-]+ — anything with a query, a colon or a // goes empty
+        // and the screen falls back to reloading, which is the behaviour before this existed.
+        const ret = /^\/[\w.\/-]+$/.test(p) ? p : '';
+        const screen = GATE_HTML.indexOf('/*@@GATE_PATH@@*/') >= 0
+          ? GATE_HTML.replace("/*@@GATE_PATH@@*/''", JSON.stringify(ret))
+          : GATE_HTML.replace(/var __GATE_TARGET=[^;]*;/, 'var __GATE_TARGET=' + JSON.stringify(ret) + ';');
+        return new Response(screen, { status: 402, headers: { 'content-type': TYPES['.html'], 'cache-control': 'no-store' } });
       }
       return new Response('locked', { status: 402, headers: { 'content-type': 'text/plain' } });
     }
