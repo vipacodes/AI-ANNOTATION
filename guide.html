@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>How the real platforms work — AnnotateTrainer</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div id="app-banner"></div>
+<div class="shell"><main class="main">
+  <div class="up">Reference</div>
+  <h1 style="font-size:26px">How the real platforms work</h1>
+  <p class="sm dim" style="max-width:74ch">Notes on the actual market, compiled from public rate bands, contributor
+  reports and review sites as of mid-2026. <b>Every number here decays fast</b> — country lists, rates and
+  queue availability change without notice. Nothing here is sponsored, and I have no referral links to sell you.</p>
+
+  <div class="card" style="margin-bottom:18px">
+    <h2 style="font-size:19px">The shape of the market</h2>
+    <p class="sm">Nobody at a frontier lab is grading your ranking. The labs buy human judgment from vendors; the
+    vendors recruit and manage the workforce; you are the workforce. Three distinct business models, and the
+    difference matters more than the pay rate on the ad:</p>
+    <table>
+      <thead><tr><th>Model</th><th>Who you deal with</th><th>Pay</th><th>Real risk</th></tr></thead>
+      <tbody>
+        <tr><td><b>Direct contractor platform</b><div class="xs dim">Outlier, Handshake AI, Alignerr, Mercor, micro1, DataAnnotation</div></td>
+          <td>Vendor's own dashboard, contract, and support queue</td><td class="mono">$15–125/hr</td>
+          <td>Opaque deactivation with the current period's balance held; no employment rights</td></tr>
+        <tr><td><b>Crowd / vendor pool</b><div class="xs dim">RWS TrainAI, Appen, TELUS Digital, Toloka, Clickworker, Prolific</div></td>
+          <td>Registration into a pool, emailed project invitations</td><td class="mono">$5–25/hr</td>
+          <td>Low ceiling, slow invitations, projects end without warning</td></tr>
+        <tr><td><b>Invitation only</b><div class="xs dim">Surge AI (the company behind DataAnnotation)</div></td>
+          <td>They recruit you; you cannot apply</td><td class="mono">highest in category</td>
+          <td>Not accessible on merit alone; reputation-gated</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="grid g3" style="margin-bottom:18px">
+    <div class="card">
+      <div class="row between"><h3 style="font-size:16px">Outlier</h3><span class="chip">Scale AI</span></div>
+      <div class="xs dim mono" style="margin-bottom:10px">outlier.ai</div>
+      <p class="sm"><b>Model.</b> Highest-volume general queue. Advertised $15–50/hr; contributor-reported reality is
+      roughly $15–20 for general writing/review, $25–40 coding, $40–80 for law/medicine. The $200/hr figure exists
+      for niche PhD demand and most people never see it.</p>
+      <p class="sm"><b>Entry.</b> Government ID, résumé, LinkedIn, an expertise verification per claimed field, an
+      80%-threshold reasoning test. Onboarding modules and assessments are unpaid.</p>
+      <p class="sm mb0"><b>Known complaints.</b> The loudest category in the whole market: sudden deactivations
+      attributed to "copy-paste, auto-typer, AI use" with templated support replies, sometimes on accounts that
+      hadn't submitted a task in months. Weekly PayPal. <b>Countries:</b> as of mid-2026, reported closed to new
+      Nigeria sign-ups — not banned by policy, simply not on the operating list. Worth re-checking quarterly, not
+      worth waiting on.</p>
+    </div>
+    <div class="card">
+      <div class="row between"><h3 style="font-size:16px">Handshake AI</h3><span class="chip">Handshake AI Solutions LLC</span></div>
+      <div class="xs dim mono" style="margin-bottom:10px">joinhandshake.com → AI fellowship</div>
+      <p class="sm"><b>Model.</b> Structured fellowship, not an open queue: résumé plus a short research statement,
+      often a 20–45 min human call with a research lead, fixed term, 10–20 hrs/week.</p>
+      <p class="sm"><b>Pay.</b> The strongest of the three for credentialed people: ~$75–125/hr clustered near
+      $90–100 for graduate-level work; per-task projects quoted $120–140 each; specialist listings advertised up to
+      $300–500/hr in medicine and physical sciences. Weekly via Deel → PayPal/Wise/bank.</p>
+      <p class="sm mb0"><b>The gate.</b> Leans hard on US work authorization and academic credentials, and the
+      contractor agreement lets them withhold in-progress pay on a terms violation — contractor ratings reflect
+      exactly that. If you are not US-authorised this is a "not for me", not a "not yet".</p>
+    </div>
+    <div class="card">
+      <div class="row between"><h3 style="font-size:16px">RWS TrainAI</h3><span class="chip">RWS plc</span></div>
+      <div class="xs dim mono" style="margin-bottom:10px">rws.com → TrainAI community</div>
+      <p class="sm"><b>Model.</b> A 40-year language-services company (London-listed) with a pool of roughly
+      100k raters/annotators/linguists. You register as a private individual or freelancer, take language-level
+      plus general attention/critical-thinking tests, then receive emailed project invitations. Minimum age 18.
+      No fee, ever.</p>
+      <p class="sm"><b>Pay.</b> Low and plain: US/EU listings around $14–15/hr for language-identification
+      annotation; US-based Glassdoor submissions for "AI Data Annotator" cluster at $20–22/hr (their "$36–49/hr"
+      band is a modelled estimate, not what people reported). PayPal or bank.</p>
+      <p class="sm mb0"><b>Why consider it.</b> Rare-language work pays premiums here and nowhere else at this
+      quality bar, the corporate entity is auditable, and it is genuinely global. The trade: slow invitations and
+      a ceiling you hit in a month.</p>
+    </div>
+  </div>
+
+  <div class="split">
+    <div class="card">
+      <h3>Which queue pays what, and why</h3>
+      <table>
+        <thead><tr><th>Task type</th><th>Reported $/hr</th><th>What actually gates it</th></tr></thead>
+        <tbody>
+          <tr><td>Search / ad rating</td><td class="mono">8–15</td><td>Nothing — this is the floor and the filler</td></tr>
+          <tr><td>Image / video / audio labelling</td><td class="mono">10–20</td><td>Tool familiarity, speed, guideline reading</td></tr>
+          <tr><td>RLHF response ranking</td><td class="mono">15–25</td><td>Agreement with co-reviewers, not correctness</td></tr>
+          <tr><td>Grounded writing / SFT answers</td><td class="mono">18–30</td><td>Ability to answer from a source without adding to it</td></tr>
+          <tr><td>Reasoning-trace review</td><td class="mono">18–30</td><td>Not over-flagging. Precision, mostly</td></tr>
+          <tr><td>Red-team prompt + report</td><td class="mono">25–45</td><td>Writing a reproducible finding, not shock value</td></tr>
+          <tr><td>Code review / debugging</td><td class="mono">25–60</td><td>Real repo experience; a degree will not carry you</td></tr>
+          <tr><td>Credentialed domain (MD/JD/PhD)</td><td class="mono">40–200</td><td>Verifiable credential + a domain assessment</td></tr>
+        </tbody>
+      </table>
+      <p class="xs dim mb0">Try the first four in <a href="queue.html">the practice queue</a> — they're the same task
+      shapes, which is the fastest way to find out where you score above 85 and can charge for it.</p>
+    </div>
+    <div>
+      <div class="card">
+        <h3>Getting the money, from Nigeria</h3>
+        <p class="sm">This is where most advice gets vague, so concretely, in rough order of usefulness:</p>
+        <table><tbody>
+          <tr><td><b>Payoneer</b></td><td class="sm dim">Accepted by the most platforms; withdraws to a local bank; the fee is visible so it's the honest baseline</td></tr>
+          <tr><td><b>USD domiciliary account</b></td><td class="sm dim">Best for larger, regular amounts; needs an opening deposit and paperwork</td></tr>
+          <tr><td><b>Grey / Kuda USD</b></td><td class="sm dim">Fast to open, useful for small platforms that only support ACH-style rails</td></tr>
+          <tr><td><b>Wise</b></td><td class="sm dim">Great rates, but receiving into Nigeria is restricted — fine if you have a foreign account, not a workaround</td></tr>
+          <tr><td><b>PayPal</b></td><td class="sm dim">Widely offered, poorly usable for receiving locally. Never pick a queue because it "pays via PayPal"</td></tr>
+          <tr><td><b>USDT / P2P</b></td><td class="sm dim">Best effective rate, real counterparty and regulatory risk, and some platforms prohibit it outright</td></tr>
+        </tbody></table>
+        <p class="xs dim">Also: this is self-employment income. Set aside something for tax instead of discovering it
+        in year two, and keep <a href="earnings.html">the ledger</a> for exactly that reason.</p>
+      </div>
+      <div class="card" style="margin-top:14px">
+        <h3>Language arbitrage nobody uses</h3>
+        <p class="sm mb0">Yoruba, Hausa, Igbo, and Nigerian Pidgin annotators are scarce and the low-resource
+        queues pay above the generalist rate for the same effort. RWS, Appen and a few specialist vendors post
+        these on a rolling basis. If you read and write one of them well, that is a concrete advantage over every
+        English-only applicant — far more than another "AI side hustle" signup.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2 id="scams" style="margin-top:34px;font-size:21px">Scam anatomy</h2>
+  <p class="sm dim" style="max-width:74ch">Every one of these props is a thing a scammer can build in an afternoon —
+  including a site that looks like the one you're reading, minus the disclaimers. Knowing what they fake is worth
+  more than any rate table.</p>
+  <div class="grid g2">
+    <div class="card">
+      <h3>What they fake</h3>
+      <div class="alert bad"><span class="ic">✕</span><div><b>Earnings dashboards and payout screenshots.</b> "I made ₦890k last month" posts are
+      the funnel. A dashboard is a DOM; it proves nothing. This site can render one too — that's precisely why you
+      should not believe any of them.</div></div>
+      <div class="alert bad"><span class="ic">✕</span><div><b>Onboarding / verification pages.</b> A cloned ID-check page exists to harvest
+      your passport and selfie for account takeover, and to justify a "verification fee".</div></div>
+      <div class="alert bad"><span class="ic">✕</span><div><b>Training courses and "assessment answers".</b> The entire real application is
+      public and free. Anyone charging for the gate is selling the gate.</div></div>
+      <div class="alert bad" style="margin-bottom:0"><span class="ic">✕</span><div><b>"US location accounts".</b> Sold on Telegram/WhatsApp.
+      ID, IP and payout country must match; someone else's identity is an instant permanent ban — and you handed a
+      stranger your documents.</div></div>
+    </div>
+    <div class="card">
+      <h3>Five checks that cost nothing</h3>
+      <ol class="sm" style="padding-left:18px;line-height:2">
+        <li><b>Does the domain match the vendor?</b> Real invitations arrive from the corporate domain, not
+        gmail/outlook/hotmail, not a link shortener, not a Telegram handle.</li>
+        <li><b>Can you find the contract?</b> Legit platforms produce a signed agreement, a payout entity name, and
+        an invoice line item from a payment processor (Deel, Payoneer, the vendor itself).</li>
+        <li><b>Search the exact phrase from their email.</b> Recruitment copy gets reused across scam rings; the
+        first hit being a Reddit warning thread is your answer.</li>
+        <li><b>Company registry.</b> RWS is LSE-listed; Scale AI and Labelbox are well-documented private companies.
+        "Innovatech AI Solutions Ltd" with a 4-month-old registration is not that.</li>
+        <li><b>Any money leaving your side, in any form</b> — fee, deposit, "equipment", "training", "software
+        licence", "withdrawal unlock". That is the whole test. No legitimate employer in this industry takes money
+        from a contributor.</li>
+      </ol>
+      <div class="alert warn" style="margin-bottom:0"><span class="ic">!</span><div>The nastiest variant targets people already working:
+      a "QM" or "project manager" DM offering higher-rate private work off-platform, paid weekly in crypto. You do
+      three weeks of tasks, get promised a big Friday payout, and there is no contract to enforce, because there
+      never was a platform.</div></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:18px">
+    <h2 style="font-size:19px">A strategy that is boring enough to work</h2>
+    <div class="grid g2" style="gap:18px">
+      <div>
+        <p class="sm"><b>1. Build the evidence before the money.</b> Register on two mid-tier pools (RWS, Appen) and
+        one expert-leaning platform. They have different queue dynamics, and the pool accounts are what you fall back
+        on when a high-rate queue goes silent for eleven days — which it will.</p>
+        <p class="sm"><b>2. Spend your unpaid hours where they compound.</b> Assessment time is unrecoverable, so
+        practise the <i>format</i> first (that's what <a href="onboarding.html">this</a> is for), and take real
+        assessments only when you can clear them in one pass. Several platforms permit zero retakes.</p>
+        <p class="sm mb0"><b>3. Pick one lane and get measurably good at it.</b> A coding queue at $40/hr beats a
+        generalist queue at $18/hr for the same month. Two weeks on the reasoning-trace and code-review tasks here
+        tells you which lane you already score in — that answer is worth more than another signup.</p>
+      </div>
+      <div>
+        <p class="sm"><b>4. Treat your quality score as your savings account.</b> Never trade score for throughput.
+        Rushing an item to hit 40 hours in a week is how an average-looking person gets an average-looking
+        restriction.</p>
+        <p class="sm"><b>5. Keep the log, withdraw on a short cycle, diversify out of this.</b> The income is real
+        and the instability is also real. People who do well here use it as a bridge — into contract dev, into
+        data-labeling QA roles, into in-house "AI trainer" jobs at $60–130k — not as a career identity.</p>
+        <p class="sm mb0"><b>6. Be honest about what the work is.</b> It is quality-controlled reading and writing
+        against a rubric, several hours a day, at rates that are good locally and mediocre globally. Anyone selling
+        it as passive income is selling the funnel, not the work.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="row" style="margin-top:20px">
+    <a class="btn" href="onboarding.html">Start the practice assessment</a>
+    <a class="btn ghost" href="queue.html">Jump to the task queue</a>
+    <a class="btn ghost" href="detector.html">Check my writing</a>
+  </div>
+
+  <div class="footnote">Numbers above are compiled from public rate bands and contributor reports (mid-2026) and
+  are cited on request; they are not guarantees, and several of them contradict what the platforms advertise. This
+  site is unaffiliated with every company named and is not a job board, recruiter, or vendor portal.</div>
+</main></div>
+
+<script src="js/storage.js"></script>
+<script src="js/tasks.js"></script>
+<script src="js/app.js"></script>
+<script>App.shell('');</script>
+</body>
+</html>

@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Trust &amp; safety — AnnotateTrainer</title>
+<link rel="stylesheet" href="css/app.css">
+<script>/* pre-paint lock: never flash protected content */(function(){var k="";try{k=localStorage.getItem("at_key")||""}catch(e){}var okk=/^[A-Za-z0-9]{6,10}\.[A-Za-z0-9_\-]{20,}\.[0-9]{10,13}$/.test(k)&&Number(String(k).split(".")[2])>=Date.now();if(!okk)document.write('<style>body[data-gated]>div{display:none!important}</style>')})();</script>
+</head>
+<body data-gated>
+<div id="app-banner"></div>
+<div class="shell"><main class="main">
+  <div class="up">The part they don't put in the ad</div>
+  <h1 style="font-size:26px">Flags, honeypots, and keeping evidence</h1>
+  <p class="sm dim" style="max-width:74ch">On these platforms the thing that ends your income is rarely a bad week.
+  It's a silent account status change with the current period's balance held, no email with specifics, and support
+  that replies from a template queue. This tab explains how the signals are collected, and gives you the one
+  mitigation that has a track record: your own contemporaneous log.</p>
+
+  <div class="grid g3" style="margin-bottom:18px">
+    <div class="card">
+      <div class="up">Signal class 1</div><h3 style="margin-top:6px">Behavioural</h3>
+      <p class="sm dim mb0">Clipboard paste into a response field · sub-threshold completion time · idle-but-timer-running
+      · devtools open during a session · keyboard-autocorrect patterns read as auto-typer · tab-away counts. Most false
+      positives here come from a dictionary extension or a slow network, and none of them are explainable in the UI.</p>
+    </div>
+    <div class="card">
+      <div class="up">Signal class 2</div><h3 style="margin-top:6px">Content</h3>
+      <p class="sm dim mb0">Stylometry drift inside one contributor's history (your writing suddenly gets more even),
+      boilerplate-phrase density, near-duplicate answers across reviewers, and agreement collapse against your
+      co-reviewers on the same item. This is the class that catches people who genuinely write formally — which is
+      why <a href="detector.html">the detector</a> on this site shows its features instead of a black box score.</p>
+    </div>
+    <div class="card">
+      <div class="up">Signal class 3</div><h3 style="margin-top:6px">Environmental</h3>
+      <p class="sm dim mb0">IP country vs. ID country vs. payout-account country. All three must match. Shared
+      household IPs and VPNs are the two most common reasons an honest contributor is banned; a purchased
+      "US-location account" is a guaranteed ban, because the seller's ID never matches yours.</p>
+    </div>
+  </div>
+
+  <div class="split">
+    <div class="panelbox">
+      <header><span>Your flag history (this browser)</span><span class="row" style="gap:6px">
+        <span class="chip" id="nflag">0</span>
+        <button class="btn ghost sm" onclick="simulate()">Simulate a false flag</button>
+        <button class="btn ghost sm" onclick="clearFlags()">Clear</button></span></header>
+      <div class="body" id="flags"></div>
+    </div>
+    <div class="card">
+      <h3>Why "no explanation" is the design, not the bug</h3>
+      <p class="sm dim">If a platform told you which signal fired, the signal would be trivially defeated. Every
+      marketplace that has answered this in a forum has said a version of "we cannot disclose the markers used to
+      protect platform integrity." Two consequences you can actually plan for:</p>
+      <div class="alert info" style="margin-bottom:8px"><span class="ic">1</span><div>Withdraw or cash out
+      on a short cycle. A balance held in escrow at the moment of a restriction is a balance you negotiate with a
+      bot queue. A balance already in your bank is not.</div></div>
+      <div class="alert info" style="margin-bottom:0"><span class="ic">2</span><div>Log as you go, not after.
+      A log written the week a ban happens is treated differently by a payment processor, an employer, or a court
+      than one written three months later.</div></div>
+    </div>
+  </div>
+
+  <div class="panelbox" style="margin-top:16px">
+    <header><span>Logbook</span><span class="row" style="gap:6px">
+      <span class="chip" id="nlog">0 entries</span>
+      <button class="btn ghost sm" onclick="csv()">Export CSV</button>
+      <button class="btn ghost sm" onclick="logbook=[];persist();paint()">Clear log</button></span></header>
+    <div class="body">
+      <div class="grid" style="grid-template-columns:1fr 1fr 1fr 1.4fr;gap:9px;margin-bottom:12px">
+        <div><label class="f">Project / queue</label><input id="l_p" placeholder="compass-9 / rlhf-ranking"></div>
+        <div><label class="f">Task or batch ID</label><input id="l_t" placeholder="copy from URL"></div>
+        <div><label class="f">Minutes billed</label><input id="l_m" type="number" min="0" value="12"></div>
+        <div><label class="f">Amount offered</label><input id="l_a" type="number" step="0.01" value="3.60"></div>
+      </div>
+      <label class="f">Note — what happened, what you submitted, what the state was</label>
+      <textarea id="l_n" rows="2" placeholder="Submitted ranking, accepted. Screenshot of dashboard taken before submit."></textarea>
+      <div class="row" style="margin-top:10px">
+        <button class="btn sm" onclick="addLog()">Add entry (timestamped now)</button>
+        <span class="xs dim">Stored in this browser only. Nothing is sent anywhere.</span>
+      </div>
+      <div id="logtbl" style="margin-top:16px"></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h3>Appeal template — what has worked in the forums</h3>
+    <p class="sm dim">Short, factual, no adjectives, and it cites your own record. Long grievance emails do not get
+    read; a three-line message with verifiable IDs sometimes does.</p>
+    <pre id="appeal"></pre>
+    <div class="row"><button class="btn sm ghost" onclick="genAppeal()">Fill from my log</button>
+      <button class="btn sm ghost" onclick="navigator.clipboard.writeText(document.getElementById('appeal').textContent);App.toast('copied','ok')">Copy</button></div>
+  </div>
+
+  <div class="alert warn" style="margin-top:18px"><span class="ic">!</span><div><b>Set expectations honestly:</b> most
+  appeals to these platforms do not succeed, and nobody owes you an explanation — you are an independent contractor
+  under terms that let them end the relationship immediately. The logbook is not a magic appeal. It's the difference
+  between "I remember earning about $1,600" and a dated record, which is also the only thing that helps with your
+  own taxes.</div></div>
+</main></div>
+
+<script src="js/storage.js"></script>
+<script src="js/access.js"></script>
+<script src="js/tasks.js"></script>
+<script src="js/app.js"></script>
+<script>
+App.shell('');
+var H = App.h, LKEY = 'annotatetrainer:logbook';
+var logbook = (function () { try { return JSON.parse(localStorage.getItem(LKEY)) || []; } catch (e) { return []; } })();
+function persist() { try { localStorage.setItem(LKEY, JSON.stringify(logbook)); } catch (e) {} }
+
+function simulate() {
+  var codes = ['stylometry_shift', 'sub_threshold_completion', 'devtools_open', 'ip_asn_mismatch'];
+  Store.flag(codes[Math.floor(Math.random() * codes.length)], 'simulated — no account was harmed');
+  App.toast('⚑ flag written. Now look at the empty appeal field above.', 'bad');
+  paint();
+}
+function clearFlags() { Store.clearFlags(); paint(); }
+
+function addLog() {
+  logbook.push({
+    at: new Date().toISOString(),
+    project: l_p.value || '(none)', task: l_t.value || '(none)',
+    mins: Number(l_m.value) || 0, amount: Number(l_a.value) || 0, note: l_n.value || ''
+  });
+  l_t.value = ''; l_n.value = '';
+  persist(); paint();
+  App.toast('entry ' + logbook.length + ' written with a timestamp', 'ok');
+}
+
+function paint() {
+  var d = Store.get();
+  nflag.textContent = d.flags.length + (d.flags.length === 1 ? ' flag' : ' flags');
+  var f = document.getElementById('flags'); f.innerHTML = '';
+  if (!d.flags.length) f.appendChild(H('p', { class: 'sm dim mb0' },
+    ['No flags recorded in this browser. Grading a honeypot item or pasting into a response field will put one here — see the integrity probe in the ',
+      H('a', { href: 'queue.html' }, ['queue']), '.']));
+  d.flags.slice().reverse().forEach(function (x) {
+    f.appendChild(H('div', { class: 'row between', style: 'padding:9px 0;border-bottom:1px solid #1b222e;font-size:13px' }, [
+      H('div', {}, [H('span', { class: 'mono', style: 'color:var(--bad)' }, [x.code]), H('div', { class: 'xs dim' }, [x.detail])]),
+      H('span', { class: 'xs dim mono' }, [new Date(x.at).toLocaleString().slice(0, 16)])
+    ]));
+  });
+
+  nlog.textContent = logbook.length + (logbook.length === 1 ? ' entry' : ' entries');
+  var t = document.getElementById('logtbl'); t.innerHTML = '';
+  if (!logbook.length) { t.appendChild(H('p', { class: 'sm dim mb0' }, ['Empty. Add one entry per graded task and you have a record worth more than any screenshot you take afterwards.'])); }
+  else {
+    var tot = logbook.reduce(function (a, b) { return a + b.mins; }, 0), amt = logbook.reduce(function (a, b) { return a + b.amount; }, 0);
+    var rows = logbook.slice().reverse().map(function (r, i) {
+      return H('tr', {}, [
+        H('td', { class: 'mono xs' }, [r.at.slice(0, 10) + '<br>' + r.at.slice(11, 16)]),
+        H('td', { class: 'sm' }, [r.project]), H('td', { class: 'mono xs dim' }, [r.task]),
+        H('td', { class: 'mono' }, [r.mins + 'm']), H('td', { class: 'mono' }, [App.money(r.amount)]),
+        H('td', { class: 'xs dim' }, [r.note]),
+        H('td', { style: 'text-align:right' }, [H('button', { class: 'btn ghost sm', onclick: function () { logbook.splice(logbook.length - 1 - i, 1); persist(); paint(); } }, ['✕'])])
+      ]);
+    });
+    t.appendChild(H('table', {}, [
+      H('thead', {}, [H('tr', {}, ['When', 'Project', 'Task ID', 'Min', '$', 'Note', ''].map(function (x) { return H('th', {}, [x]); }))]),
+      H('tbody', {}, rows),
+      H('tbody', {}, [H('tr', {}, [H('td', { class: 'up', colspan: '3' }, ['totals']),
+        H('td', { class: 'mono' }, [tot + 'm']), H('td', { class: 'mono' }, [App.money(amt)]), H('td', {}), H('td', {})])])
+    ]));
+  }
+  genAppeal();
+}
+
+function genAppeal() {
+  var d = Store.get(), st = Store.stats();
+  var lines = [
+    'Subject: account review request — contributor ' + ((d.profile && d.profile.name) || '[name]') + ', ' + (d.flags.length ? d.flags.length + ' integrity flag(s) recorded ' : '') + new Date().toISOString().slice(0, 10),
+    '',
+    'Hello,',
+    '',
+    'I am asking for a human review of my account status. I am not disputing your policy; I am asking which',
+    'project and pay period are affected, because I have no visibility from the dashboard.',
+    '',
+    'My own records for the period in question:'];
+  if (logbook.length) {
+    logbook.slice(-8).forEach(function (r) {
+      lines.push(' - ' + r.at.slice(0, 16).replace('T', ' ') + ' · ' + r.project + ' · task ' + r.task +
+        ' · ' + r.mins + ' min · ' + App.money(r.amount) + ' · accepted per dashboard at the time');
+    });
+  } else {
+    lines.push(' - [paste your entries: date, project, task ID, minutes, amount, dashboard state]');
+  }
+  lines.push('');
+  lines.push('Totals: ' + logbook.length + ' graded submissions, ' +
+    (logbook.reduce(function (a, b) { return a + b.mins; }, 0)) + ' minutes, ' +
+    App.money(logbook.reduce(function (a, b) { return a + b.amount; }, 0)) + '.');
+  lines.push('Quality score at last check: ' + (st.qualityScore === null ? 'n/a' : st.qualityScore) +
+    ' · acceptance ' + (st.acceptance === null ? 'n/a' : st.acceptance + '%') + '.');
+  lines.push('');
+  lines.push('I have not used AI assistance, macros, autoclickers, auto-typer software, or a VPN. If a device or');
+  lines.push('network signal triggered this, my household shares one connection and my browser runs a spell-check');
+  lines.push('extension — I can describe both if useful. Please tell me whether the decision is final so I can');
+  lines.push('close my side of the arrangement. Thank you.');
+  document.getElementById('appeal').textContent = lines.join('\n');
+}
+function csv() {
+  var head = 'timestamp,project,task_id,minutes,amount_usd,note\n';
+  var body = logbook.map(function (r) {
+    return [r.at, r.project, r.task, r.mins, r.amount, '"' + String(r.note).replace(/"/g, '""') + '"'].join(',');
+  }).join('\n');
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([head + body], { type: 'text/csv' }));
+  a.download = 'annotation-logbook.csv'; a.click();
+}
+paint();
+</script>
+</body>
+</html>

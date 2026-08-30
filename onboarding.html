@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Qualification assessment — AnnotateTrainer</title>
+<link rel="stylesheet" href="css/app.css">
+<script>/* pre-paint lock: never flash protected content */(function(){var k="";try{k=localStorage.getItem("at_key")||""}catch(e){}var okk=/^[A-Za-z0-9]{6,10}\.[A-Za-z0-9_\-]{20,}\.[0-9]{10,13}$/.test(k)&&Number(String(k).split(".")[2])>=Date.now();if(!okk)document.write('<style>body[data-gated]>div{display:none!important}</style>')})();</script>
+</head>
+<body data-gated>
+<div id="app-banner"></div>
+<div class="shell"><main class="main">
+  <div class="row between" style="margin-bottom:6px">
+    <div><div class="up">Step 1 of 2 · unpaid</div><h1 style="font-size:26px">Qualification assessment</h1></div>
+    <div class="row" style="gap:8px">
+      <span class="chip warn" id="clk">14:00</span>
+      <span class="chip" id="spent">time invested 0:00</span>
+    </div>
+  </div>
+  <p class="sm dim" style="max-width:70ch">Four sections, one clock, <b>no retakes</b> — matching how several real
+  platforms treat their starter assessment. Threshold to reach the paid queue is <b>80%</b>. On real platforms
+  none of the time below is billed; here it goes into your <a href="earnings.html">unpaid ledger</a> so you can
+  see what screening actually costs you.</p>
+
+  <div class="stepper" id="stepper"></div>
+  <div id="stage"></div>
+  <div id="result"></div>
+</main></div>
+
+<script src="js/storage.js"></script>
+<script src="js/access.js"></script>
+<script src="js/tasks.js"></script>
+<script src="js/app.js"></script>
+<script>
+App.shell('onboarding');
+
+var SECTIONS = [
+  { id: 'eng', name: 'English proficiency', mins: 5, count: 10 },
+  { id: 'reason', name: 'Reasoning', mins: 4, count: 5 },
+  { id: 'att', name: 'Attention to detail', mins: 3, count: 1 },
+  { id: 'orient', name: 'Platform orientation', mins: 2, count: 5 }
+];
+var TOTAL = 14 * 60;
+
+var ENG = [
+  ['Which sentence is grammatically correct?',
+   ['Neither of the two submissions were accepted.', 'Neither of the two submissions was accepted.',
+    'Neither of the two submissions are accepted.', 'Neither or the two submissions were accepted.'], 1],
+  ['Pick the correctly spelled pair.',
+   ['accomodate / seperate', 'accommodate / separate', 'accommodate / seperate', 'acommodate / separate'], 1],
+  ['"The queue has fewer tasks than last week, but the ones left are more tedious." The word "tedious" here means:',
+   ['boring and slow', 'difficult to spell', 'financially risky', 'technically complex'], 0],
+  ['Choose the sentence with correct punctuation:',
+   ["Its a long assessment, but its worth it.", "It's a long assessment, but it's worth it.",
+    "Its a long assessment, but it's worth it.", "It's a long assessment, but its worth it."], 1],
+  ['"Prior to submitting, ensure the field is not left blank." Best paraphrase:',
+   ['Leave the field empty before you submit.', 'Check the field has content before you submit.',
+    'Submit first, then fill the field.', 'The field is optional.'], 1],
+  ['Which sentence makes a claim that could be verified against a source?',
+   ['AI training work is pretty popular these days.', 'Many people enjoy remote work.',
+    'Outlier pays contributors weekly through PayPal.', 'Pay one.'], 2],
+  ['Fill the gap: "If the guideline ___ changed mid-project, we ___ the flag." ',
+   ['is / will raise', 'was / would raise', 'were / will of raised', 'has / would of raise'], 1],
+  ['Which of these is the most precise instruction to a reviewer?',
+   ['Make it better.', 'Be nice about the feedback.',
+    'State which rubric item failed and quote the offending sentence.', 'Give them something to work with.'], 2],
+  ['"The result was largely consistent with the pilot." Which sentence contradicts it?',
+   ['Some items diverged from the pilot.', 'Every item differed from the pilot.',
+    'The pilot was small.', 'Consistency was expected.'], 1],
+  ['Pick the sentence that avoids hedging without overclaiming:',
+   ['It could perhaps possibly be argued that pay may vary.',
+    'Pay varies by project; the ad rate is not a guarantee.',
+    'You will definitely be paid every week.',
+    'Some people say things about pay.'], 1]
+];
+
+var REASON = [
+  ['A contributor logs 10 h/week at $15/hr. The client pays for approved work only, and 3 of those hours were rejected. What is the weekly gross?',
+   ['$150', '$105', '$120', '$45'], 1,
+   '7 approved hours × $15 = $105. The trap is answering 10 × 15 and forgetting the approved-work condition.'],
+  ['Ranking tasks: A is fluent but contains a fabricated citation. B is blunt, correct, and cites the brief. Most guideline sets rank B above A because:',
+   ['B is shorter', 'unsupported claims are a hard fail regardless of tone',
+    'fluency is never a quality signal', 'citations are optional'], 1,
+   'The decisive property is unverifiable/unsupported content, not length or tone. "Fluency is never a signal" is too absolute — it is a weak positive signal, just not a decisive one.'],
+  ['A model says: "The policy has no exception clause." The policy text you were given does not mention exceptions at all. Correct verdict:',
+   ['SUPPORTED', 'CONTRADICTED', 'NOT IN BRIEF', 'Cannot grade without a dictionary'], 2,
+   'Absence of the topic in the source is "not in brief". Contradicted requires the source to say the opposite.'],
+  ['Twelve tasks in 40 minutes, then nine tasks in 30 minutes. Which is true?',
+   ['Throughput improved', 'Throughput dropped', 'Throughput is unchanged', 'Cannot tell without dollar rates'], 0,
+   '12/40 = 0.30/min vs 9/30 = 0.30/min — equal. The tempting answer is "improved" because 12 > 9.'],
+  ['Your quality score is 91 with 11 tasks, then 62 with 2 tasks. A platform restricts you at "8 consecutive below 75". You:',
+   ['Are safe — your average is above 75', 'Are at risk — averages hide streaks',
+    'Are restricted already — 62 is below 75', 'Cannot be judged on 13 tasks'], 1,
+   'Rolling-window rules are not the same as average rules. Knowing which one a queue uses is part of reading the brief.']
+];
+
+var ORIENT = [
+  ['A legitimate AI-training platform may charge a small one-time registration fee.', 'False',
+   'None do. Any request for money — activation, ID verification, "training access" — is the scam.'],
+  ['Onboarding and assessment time is usually paid at your project rate.', 'False',
+   'It is usually unpaid; a few clients pay a fraction. This is the single biggest hidden cost in the whole category.'],
+  ['If a platform does not list your country, using a VPN to appear elsewhere is an accepted workaround.', 'False',
+   'ID, IP and payout account are cross-checked. A mismatch is a permanent ban with the balance forfeited.'],
+  ['Ratings on review sites for these platforms are usually split, with serious complaints about account deactivations.', 'True',
+   'Trustpilot/Glassdoor scores for most marketplaces sit in the 1.2–4.0 range precisely because of opaque bans and held payments.'],
+  ['The same task graded by two reviewers can receive different accepted answers.', 'True',
+   'Grading is consensus-based, which is why "one right ordering" framing is a red flag in a brief.']
+];
+/* orientation items are True/False */
+
+var state = { idx: 0, t0: Date.now(), answers: {}, attention: null, done: false };
+
+var timer = App.timer({ seconds: TOTAL, el: document.getElementById('clk'), onExpire: function () { finish(true); } });
+setInterval(function () {
+  var s = Math.round((Date.now() - state.t0) / 1000);
+  document.getElementById('spent').textContent = 'time invested ' + App.mmss(s);
+}, 1000);
+
+/* question banks normalised once at definition time (no shape logic inside render) */
+function norm(arr) {
+  return arr.map(function (row) {
+    return { q: row[0], options: row[1], gold: row[2], why: row[3] || '' };
+  });
+}
+var BANKS = {
+  eng: norm(ENG),
+  reason: norm(REASON),
+  orient: ORIENT.map(function (o) { return { q: o[0], options: ['True', 'False'], gold: o[1] === 'True' ? 0 : 1, why: o[2] }; })
+};
+
+/* ---------- attention grid ---------- */
+function buildGrid() {
+  var decoys = ['Kairos Labs', 'Kairos-Labs', 'kairos', 'Kairos9', 'Kairos.', 'Kalros', 'Kairos Labs', 'Kairoslabs', 'KAIROS'];
+  var cells = [], pool = [];
+  for (var i = 0; i < 48; i++) pool.push(i % 4 === 0 ? 'Kairos' : decoys[(i * 7) % decoys.length]);
+  /* deterministic-ish shuffle */
+  pool.sort(function (a, b) { return (a.length * 13 + b.charCodeAt(0)) - (b.length * 13 + a.charCodeAt(0)); });
+  var correct = 0;
+  pool.forEach(function (tok, i) { if (tok === 'Kairos') correct++; });
+  return { tokens: pool, correct: correct };
+}
+var GRID = buildGrid();
+
+function render() {
+  var st = document.getElementById('stepper'); st.innerHTML = '';
+  SECTIONS.forEach(function (s, i) {
+    st.appendChild(App.h('div', { class: i === state.idx ? 'on' : (i < state.idx ? 'done' : '') },
+      [(i < state.idx ? '✓ ' : '') + s.name + ' · ' + s.mins + 'm']));
+  });
+  var stage = document.getElementById('stage'); stage.innerHTML = '';
+  var s = SECTIONS[state.idx];
+  var card = App.h('div', { class: 'card reveal' }, [
+    App.h('div', { class: 'row between', style: 'margin-bottom:14px' }, [
+      App.h('div', {}, [App.h('h2', { class: 'mb0', style: 'font-size:19px' }, [s.name]),
+        App.h('div', { class: 'xs dim' }, [s.count + ' item' + (s.count > 1 ? 's' : '') + ' · no partial credit for skipped items'])]),
+      App.h('span', { class: 'chip violet' }, ['section ' + (state.idx + 1) + '/' + SECTIONS.length])
+    ])
+  ]);
+  stage.appendChild(card);
+
+  if (BANKS[s.id]) {
+    var bank = BANKS[s.id];
+    for (var qi = 0; qi < bank.length; qi++) {
+      var q = bank[qi];
+      if (!q || !q.options || !q.options.length) throw new Error('broken question ' + s.id + ':' + qi);
+      var opts = q.options.map(function (o, oi) {
+        return App.h('button', {
+          class: 'btn sm ' + (state.answers[s.id + ':' + qi] === oi ? 'ok' : 'ghost'),
+          onclick: function () { state.answers[s.id + ':' + qi] = oi; render(); }
+        }, [String(o)]);
+      });
+      card.appendChild(App.h('div', { style: 'margin-bottom:16px' }, [
+        App.h('div', { class: 'sm', style: 'font-weight:600;margin-bottom:7px' }, [(qi + 1) + '. ' + q.q]),
+        App.h('div', { class: 'row', style: 'gap:8px' }, opts)
+      ]));
+    }
+    if (s.id === 'reason') card.appendChild(App.h('div', { class: 'alert info' }, [
+      App.h('span', { class: 'ic', html: 'i' }),
+      App.h('div', {}, ['Explanations are withheld until the end. On a real platform you never see them at all — that is why practising the ',
+        '<b>shape</b> of these items matters more than memorising answers.'])]));
+  }
+
+  if (s.id === 'att') {
+    card.appendChild(App.h('p', { class: 'sm' }, ['Click every cell containing ', App.h('b', { class: 'mono' }, ['Kairos']),
+      ' — the standalone word only. Variants like ', App.h('span', { class: 'mono' }, ['Kairos Labs']), ', ',
+      App.h('span', { class: 'mono' }, ['Kairos-Labs']), ', ', App.h('span', { class: 'mono' }, ['Kairoslabs']),
+      ' and ', App.h('span', { class: 'mono' }, ['kairos']), ' do not count.',
+      App.h('b', {}, [' ' + GRID.correct + ' cells']), ' qualify.']));
+    var grid = App.h('div', { style: 'display:grid;grid-template-columns:repeat(8,1fr);gap:6px' });
+    GRID.tokens.forEach(function (tok, i) {
+      var sel = (state.answers.att || (state.answers.att = {}))[i];
+      grid.appendChild(App.h('button', {
+        class: 'chip ' + (sel ? 'violet' : ''),
+        style: 'justify-content:center;padding:9px 4px;font-family:var(--mono);font-size:11px;cursor:pointer',
+        onclick: function () { var a = state.answers.att; a[i] = !a[i]; render(); }
+      }, [tok]));
+    });
+    card.appendChild(grid);
+  }
+
+  var foot = App.h('div', { class: 'row between', style: 'margin-top:18px' }, [
+    App.h('div', { class: 'xs dim' }, ['Elapsed ' + App.mmss((Date.now() - state.t0) / 1000) + ' · this section is unpaid on every real platform']),
+    App.h('div', { class: 'row' }, [
+      state.idx > 0 ? App.h('button', { class: 'btn ghost sm', onclick: function () { state.idx--; render(); } }, ['← Back']) : null,
+      state.idx < SECTIONS.length - 1
+        ? App.h('button', { class: 'btn sm', onclick: function () { state.idx++; render(); } }, ['Next section →'])
+        : App.h('button', { class: 'btn ok', onclick: function () { finish(false); } }, ['Submit assessment'])
+    ])
+  ]);
+  card.appendChild(foot);
+}
+
+function sectionScore(sid) {
+  var right = 0, n = 0;
+  if (sid === 'att') {
+    var sel = state.answers.att || {};
+    var tp = 0, fp = 0, fn = 0;
+    GRID.tokens.forEach(function (tok, i) {
+      var isG = tok === 'Kairos', isS = !!sel[i];
+      if (isG && isS) tp++; else if (!isG && isS) fp++; else if (isG && !isS) fn++;
+      n = 1;
+    });
+    var f1 = (tp + fp) && (tp + fn) ? (2 * tp) / (2 * tp + fp + fn) : 0;
+    return { pct: Math.round(f1 * 100), detail: tp + ' correct · ' + fp + ' false positives · ' + fn + ' missed' };
+  }
+  var bank = sid === 'eng' ? ENG : REASON;
+  if (sid === 'orient') return { pct: Math.round(ORIENT.reduce(function (a, o, i) { return a + (state.answers['orient:' + i] === (o[1] === 'True' ? 0 : 1) ? 1 : 0); }, 0) / ORIENT.length * 100), detail: '5 items' };
+  bank.forEach(function (q, i) { n++; if (state.answers[sid + ':' + i] === q[2]) right++; });
+  return { pct: Math.round(100 * right / n), detail: right + '/' + n + ' correct' };
+}
+
+function finish(timedOut) {
+  if (state.done) return;
+  state.done = true; timer.stop();
+  var secs = Math.round((Date.now() - state.t0) / 1000);
+  Store.addTime('assessment', secs);
+  var results = SECTIONS.map(function (s) { var r = sectionScore(s.id); return { name: s.name, pct: r.pct, detail: r.detail }; });
+  var total = Math.round(results.reduce(function (a, r) { return a + r.pct; }, 0) / results.length);
+  var passed = total >= 80;
+  Store.setOnboard({ score: total, passed: passed, minutes: Math.round(secs / 60), at: Date.now() });
+  App.post('/api/submit', { page: 'onboarding', kind: 'assessment', score: total, passed: passed, seconds: secs });
+
+  var box = document.getElementById('result'); box.innerHTML = '';
+  box.appendChild(App.h('div', { class: 'card reveal', style: 'margin-top:18px;border-color:' + (passed ? '#1f6a4a' : '#6e2530') }, [
+    App.h('div', { class: 'row between' }, [
+      App.h('div', {}, [
+        App.h('div', { class: 'up' }, [timedOut ? 'clock expired · auto-submitted' : 'submitted']),
+        App.h('div', { style: 'font-size:38px;font-weight:800;font-family:var(--mono)' }, [total + '%']),
+        App.h('h2', { class: 'mb0', style: 'font-size:17px' }, [passed ? 'Cleared — you would reach the paid queue' : 'Below threshold — you would get the template email'])
+      ]),
+      App.h('div', { style: 'text-align:right' }, [
+        App.h('div', { class: 'up' }, ['You just worked for free']),
+        App.h('div', { class: 'mono', style: 'font-size:22px;color:var(--warn)' }, [App.mmss(secs)]),
+        App.h('div', { class: 'xs dim' }, ['≈ ' + App.money(secs / 3600 * ((Store.get().profile || {}).rate || 15)) + ' at your rate'])
+      ])
+    ]),
+    App.h('div', { class: 'hr' }),
+    App.h('table', {}, [App.h('thead', {}, [App.h('tr', {}, ['Section', 'Score', 'Detail', ''].map(function (x) { return App.h('th', {}, [x]); }))]),
+      App.h('tbody', {}, results.map(function (r) {
+        return App.h('tr', {}, [
+          App.h('td', {}, [r.name]),
+          App.h('td', { class: 'mono' }, [App.h('span', { class: 'chip ' + (r.pct >= 80 ? 'ok' : r.pct >= 60 ? 'warn' : 'bad') }, [r.pct + '%'])]),
+          App.h('td', { class: 'sm dim' }, [r.detail]),
+          App.h('td', { class: 'sm' }, [r.pct < 80 ? 'This section is where the rejection usually comes from.' : ''])
+        ]);
+      }))]),
+    App.h('div', { class: 'hr' }),
+    App.h('p', { class: 'sm' }, [passed
+      ? 'Go take the real tasks: <a href="queue.html">open the queue</a>. Run the <a href="detector.html">detector</a> on your own written answers before you submit them — templated prose is what tanks scores on writing sections like the one you just did.'
+      : 'On a real platform this is a rejection with no explanation and often no retake. Here you can rerun it as many times as you like — that is the entire value of practising somewhere the failure costs nothing. <a href="#" id="retry">Retry now</a>']),
+    App.h('div', { class: 'row' }, [
+      App.h('a', { class: 'btn', href: 'queue.html' }, ['Continue to task queue →']),
+      App.h('a', { class: 'btn ghost', href: 'earnings.html' }, ['See what the unpaid hours did to my projection'])
+    ])
+  ]));
+  var rt = document.getElementById('retry');
+  if (rt) rt.onclick = function (e) {
+    e.preventDefault(); state.done = false; state.idx = 0; state.answers = {}; state.t0 = Date.now();
+    box.innerHTML = ''; timer = App.timer({ seconds: TOTAL, el: document.getElementById('clk'), onExpire: function () { finish(true); } }); render();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  box.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+render();
+</script>
+</body>
+</html>

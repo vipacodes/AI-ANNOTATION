@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Platform profile — AnnotateTrainer</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div id="app-banner"></div>
+<div class="shell"><main class="main" id="root"></main></div>
+
+<script src="js/storage.js"></script>
+<script src="js/tasks.js"></script>
+<script src="js/platforms.js"></script>
+<script src="js/mockups.js"></script>
+<script src="js/app.js"></script>
+<script>
+App.shell('platforms');
+var H = App.h, root = document.getElementById('root');
+var id = new URLSearchParams(location.search).get('p');
+var P = Platforms.get(id);
+
+if (!P) {
+  root.innerHTML = '<div class="card" style="margin-top:40px"><h1>No such profile</h1>' +
+    '<p class="dim">That platform is not in the catalogue. Pick one from the list.</p>' +
+    '<a class="btn" href="platforms.html">Back to all platforms</a></div>';
+} else {
+  document.title = P.name + ' — how it works · AnnotateTrainer';
+  var st = Store.stats();
+  var practice = Platforms.tasksFor(P.id) || [];
+
+  root.appendChild(H('div', { class: 'row between', style: 'margin-bottom:6px' }, [
+    H('div', { class: 'row', style: 'gap:12px' }, [
+      H('span', { style: 'width:38px;height:38px;border-radius:10px;display:grid;place-items:center;font-weight:900;color:#0b0d12;background:' + P.accent + ';font-size:17px' }, [P.short]),
+      H('div', {}, [
+        H('div', { class: 'up' }, [P.tier + ' · ' + P.operator]),
+        H('h1', { style: 'font-size:27px;margin:2px 0 0' }, [P.name])
+      ])
+    ]),
+    H('div', { class: 'row', style: 'gap:8px' }, [
+      H('a', { class: 'btn ghost sm', href: P.url, target: '_blank', rel: 'noopener' }, ['Official site ↗']),
+      H('a', { class: 'btn', href: 'queue.html?p=' + P.id }, ['Start the practice set →'])
+    ])
+  ]));
+  root.appendChild(H('div', { style: 'height:3px;border-radius:3px;background:linear-gradient(90deg,' + P.accent + ',transparent);margin:12px 0 22px' }));
+  root.appendChild(H('p', { class: 'sm', style: 'max-width:78ch' }, [P.blurb]));
+
+  /* ---------- mockup ---------- */
+  var mock = H('div', { class: 'panelbox', style: 'margin:18px 0' }, [
+    H('header', {}, [H('span', {}, ['What the workspace looks like']),
+      H('span', { class: 'chip warn' }, ['reconstruction · not a screenshot'])]),
+    H('div', { class: 'body' }, [
+      H('div', { html: Mockups.for(P.id, P.accent) }),
+      H('p', { class: 'xs dim mb0', style: 'margin:12px 0 0' }, [
+        Mockups.caption[({ outlier: 'squad', alignerr: 'squad', dataannotation: 'squad', mindrift: 'pool', handshake: 'fellowship', mercor: 'gate', telus: 'pool', appen: 'pool', rws: 'pool', toloka: 'gate', prolific: 'gate', pareto: 'fellowship' })[P.id] || 'pool'],
+        ' A PNG version for your own notes or a share image sits in <code>assets/</code>. Videos: see the media note at the bottom of this page.'
+      ])
+    ])
+  ]);
+  root.appendChild(mock);
+
+  /* ---------- funnel ---------- */
+  var fn = H('div', { class: 'panelbox', style: 'margin-bottom:16px' }, [
+    H('header', {}, [H('span', {}, ['The funnel, start to paid']), H('span', { class: 'chip' }, [P.funnel.length + ' stages'])]),
+    H('div', { class: 'body', style: 'padding:6px 16px 16px' }, P.funnel.map(function (s, i) {
+      var unpaid = /UNPAID/i.test(s[2]);
+      return H('div', { class: 'row', style: 'gap:14px;padding:13px 0;border-bottom:1px solid #1b222e;align-items:flex-start' }, [
+        H('span', { class: 'chip ' + (unpaid ? 'bad' : 'ok'), style: 'width:30px;justify-content:center;flex:none' }, [String(i + 1)]),
+        H('div', { style: 'flex:1;min-width:0' }, [
+          H('div', { style: 'font-weight:650' }, [s[0]]),
+          H('div', { class: 'xs dim', style: 'margin-top:2px' }, [s[2]])
+        ]),
+        H('div', { style: 'text-align:right;flex:none' }, [
+          H('div', { class: 'mono xs' }, [s[1]]),
+          H('span', { class: 'chip ' + (unpaid ? 'bad' : ''), style: 'margin-top:5px' }, [unpaid ? 'unpaid' : '—'])
+        ])
+      ]);
+    }))
+  ]);
+  root.appendChild(fn);
+
+  /* ---------- rates + payout ---------- */
+  var pay = H('div', { class: 'grid g2', style: 'margin-bottom:16px;align-items:start' }, [
+    H('div', { class: 'card' }, [
+      H('h3', { class: 'mb0' }, ['Rates, three ways']),
+      H('div', { class: 'hr' }),
+      row('Advertised', P.rates.advertised),
+      row('What contributors report', P.rates.actual, 'var(--ok)'),
+      row('The catch on the ceiling', P.rates.cap, 'var(--warn)')
+    ]),
+    H('div', { class: 'card' }, [
+      H('h3', { class: 'mb0' }, ['Money in your hand']),
+      H('div', { class: 'hr' }),
+      row('Rail', P.payout.rails),
+      row('Cadence', P.payout.cadence),
+      row('Minimum', P.payout.minimum),
+      H('div', { class: 'alert info', style: 'margin:14px 0 0' }, [H('span', { class: 'ic', html: '₦' }),
+        H('div', {}, [H('b', {}, ['From Nigeria: ']), P.nigeria.note])]),
+      H('div', { class: 'row', style: 'margin-top:10px' }, [
+        H('span', { class: 'chip ' + (P.nigeria.status.indexOf('open') >= 0 || P.nigeria.status.indexOf('global') >= 0 || P.nigeria.status.indexOf('genuinely') >= 0 ? 'ok' : P.nigeria.status.indexOf('unavailable') >= 0 ? 'bad' : 'warn') },
+          ['Nigeria: ' + P.nigeria.status])
+      ])
+    ])
+  ]);
+  root.appendChild(pay);
+
+  /* ---------- gates / tasks / breaks ---------- */
+  root.appendChild(H('div', { class: 'grid g3', style: 'align-items:start;margin-bottom:16px' }, [
+    list('The gate', P.gates, 'warn', 'Clear all of these before you invest unpaid hours. This is where most applicants stop.'),
+    list('What you will actually do', P.tasks, 'info', 'Pick the lane you can already out-score on the practice set below.'),
+    list('What gets people restricted here', P.breaks, 'bad', 'Every item on this list is avoidable and none of them announce themselves when they fire.')
+  ]));
+
+  /* ---------- practice ---------- */
+  var pbox = H('div', { class: 'panelbox', style: 'margin-bottom:16px' }, [
+    H('header', {}, [H('span', {}, ['Practice set \u00b7 ' + P.name + '-shaped']),
+      H('span', { class: 'chip violet' }, [practice.length + ' tasks'])]),
+    H('div', { class: 'body' }, [
+      H('p', { class: 'sm dim', style: 'margin-bottom:14px' }, [
+        P.practiceLabel + '. ' + P.fictionalNote + '.']),
+      H('table', {}, [H('thead', {}, [H('tr', {}, ['Task', 'Format', 'Rate you are practising at', 'Your last score', ''].map(function (x) { return H('th', {}, [x]); }))]),
+        H('tbody', {}, practice.map(function (t) {
+          var mine = Store.get().attempts.filter(function (a) { return a.task === t.id; }).pop();
+          return H('tr', {}, [
+            H('td', {}, [App.h('div', { style: 'font-weight:600' }, [t.title]), H('div', { class: 'xs dim mono' }, [t.project])]),
+            H('td', { class: 'sm dim' }, [t.type]),
+            H('td', { class: 'mono' }, ['$' + t.rate + '/hr']),
+            H('td', {}, [mine ? H('span', { class: 'chip ' + (mine.score >= 90 ? 'ok' : mine.score >= 70 ? 'warn' : 'bad') }, [mine.score + '/100']) : H('span', { class: 'xs dim' }, ['not tried'])]),
+            H('td', { style: 'text-align:right' }, [H('a', { class: 'btn sm' + (mine && mine.score >= 90 ? ' ghost' : ''), href: 'task.html?id=' + t.id }, ['Open'])])
+          ]);
+        }))])
+    ])
+  ]);
+  root.appendChild(pbox);
+
+  /* ---------- media + honesty ---------- */
+  root.appendChild(H('div', { class: 'grid g2', style: 'align-items:start' }, [
+    H('div', { class: 'card' }, [
+      H('h3', { class: 'mb0' }, ['Images and video, the honest way']),
+      H('p', { class: 'sm dim' }, ['This profile shows a drawn reconstruction plus the vendor\u2019s own public material. ' +
+        'That is deliberate: scraping a real dashboard and rehosting it puts you in possession of someone else\u2019s ' +
+        'copyrighted UI screenshots, and it is the exact asset pack scam operators use.']),
+      H('div', { class: 'row', style: 'margin-bottom:10px' }, [
+        H('a', { class: 'btn sm ghost', href: P.url, target: '_blank', rel: 'noopener' }, ['Official site ↗']),
+        H('a', { class: 'btn sm ghost', href: 'https://www.youtube.com/results?search_query=' + encodeURIComponent(P.name + ' contributor walkthrough'), target: '_blank', rel: 'noopener' }, ['Vendor walkthroughs ↗'])
+      ]),
+      H('p', { class: 'xs dim mb0' }, ['If you record your own walkthrough of this practice set, host it on your own ' +
+        'channel and embed it \u2014 there is a media slot on every profile page for exactly that.'])
+    ]),
+    H('div', { class: 'card' }, [
+      H('h3', { class: 'mb0' }, ['Reality check']),
+      H('p', { class: 'sm' }, ['Figures on this page: ', App.esc(Platforms.asOf), '.']),
+      H('p', { class: 'sm dim mb0' }, ['AnnotateTrainer is not affiliated with ' + P.name + ', is not a recruiter for them, ' +
+        'and cannot get you access. Passing the practice set here changes nothing on their side \u2014 it only means you ' +
+        'walked into their real assessment having already made the mistakes somewhere they cost you nothing.'])
+    ])
+  ]));
+
+  function row(k, v, c) {
+    return H('div', { style: 'display:flex;gap:14px;padding:8px 0;border-bottom:1px solid #1b222e' }, [
+      H('span', { class: 'xs dim', style: 'flex:none;width:150px' }, [k]),
+      H('span', { class: 'sm', style: 'color:' + (c || 'inherit') }, [v])
+    ]);
+  }
+  function list(title, items, kind, note) {
+    return H('div', { class: 'card' }, [
+      H('h3', { class: 'mb0' }, [title]),
+      H('div', { class: 'hr', style: 'margin:12px 0' }),
+      H('div', {}, items.map(function (x, i) {
+        return H('div', { class: 'row', style: 'gap:10px;align-items:flex-start;padding:6px 0' }, [
+          H('span', { class: 'chip ' + kind, style: 'flex:none;width:22px;justify-content:center' }, [String(i + 1)]),
+          H('span', { class: 'sm' }, [x])
+        ]);
+      })),
+      H('p', { class: 'xs dim', style: 'margin:12px 0 0' }, [note])
+    ]);
+  }
+}
+</script>
+</body>
+</html>

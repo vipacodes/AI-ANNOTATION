@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Access — AnnotateTrainer</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div id="app-banner"></div>
+<header class="top">
+  <div class="brand"><span class="logo">A</span><div>AnnotateTrainer<small>assessment simulator</small></div></div>
+  <nav class="nav"><a href="platforms.html">Platforms</a><a href="guide.html">Free guide</a><a href="gate.html">I have a key</a></nav>
+</header>
+
+<div class="wrap" style="padding-bottom:70px">
+  <div class="row" style="margin-top:40px"><span class="chip ok">no subscription traps</span><span class="chip">cancel any time</span><span class="chip warn">not affiliated with any platform</span></div>
+  <h1 style="font-size:38px;margin-top:14px;max-width:22ch">Pay once, practise until you clear the real assessment.</h1>
+  <p class="dim" style="max-width:62ch">The guide and the platform catalogue are free and always will be. You are paying
+  for the part that costs me something: the graded task corpus, the rubric feedback, and the re-runs.</p>
+
+  <div class="grid g3" style="margin-top:30px">
+    <div class="card" style="border-top:3px solid var(--line2)">
+      <div class="up">Week pass</div>
+      <div class="mono" style="font-size:32px;font-weight:800;margin:6px 0">₦6,000</div>
+      <p class="sm dim">7 days. Enough to run every task type once, twice, and re-run the two you failed.</p>
+      <ul class="sm dim" style="padding-left:17px;line-height:1.9;margin:14px 0 18px">
+        <li>All 12 platform profiles</li><li>All graded practice tasks</li><li>AI-tells detector</li><li>Ledger + export</li>
+      </ul>
+      <button class="btn ghost buy" data-plan="week" data-amt="6000" data-cur="NGN" style="width:100%;justify-content:center">Request key</button>
+    </div>
+    <div class="card" style="border-color:#4b4191;border-top:3px solid var(--violet);background:linear-gradient(180deg,#181a2c,#141922)">
+      <div class="up" style="color:#cfc7ff">Season · best value</div>
+      <div class="mono" style="font-size:32px;font-weight:800;margin:6px 0">₦18,000</div>
+      <p class="sm dim">90 days, because queues dry up for weeks and the useful pass is the second one you take after a real rejection.</p>
+      <ul class="sm" style="padding-left:17px;line-height:1.9;margin:14px 0 18px">
+        <li>Everything in the week pass</li><li>Platform-targeted practice presets</li><li>Honeypot + Trust &amp; safety drills</li><li>New task sets when they land</li>
+      </ul>
+      <button class="btn buy" data-plan="season" data-amt="18000" data-cur="NGN" style="width:100%;justify-content:center">Request key</button>
+    </div>
+    <div class="card" style="border-top:3px solid var(--line2)">
+      <div class="up">USD price</div>
+      <div class="mono" style="font-size:32px;font-weight:800;margin:6px 0">$6 / $18</div>
+      <p class="sm dim">Same passes, billed in dollars for contributors outside Nigeria.</p>
+      <ul class="sm dim" style="padding-left:17px;line-height:1.9;margin:14px 0 18px">
+        <li>Card / Payoneer / Wise</li><li>Receipt includes your key</li><li>Refund if the lock fails on your side</li>
+      </ul>
+      <button class="btn ghost buy" data-plan="usd" data-amt="18" data-cur="USD" style="width:100%;justify-content:center">Request key</button>
+    </div>
+  </div>
+
+  <div class="grid g2" style="margin-top:26px;align-items:start">
+    <div class="card">
+      <h3>What a key is, mechanically</h3>
+      <p class="sm dim">A key is a signed string, not an account: <code class="mono">id.signature.expiry</code>. You paste it once,
+      it sets a cookie, the server verifies the signature against its secret and serves the protected pages. Revoke any key at
+      any time with one command. There is no password to leak, no database of you, and no email list.</p>
+      <p class="sm dim mb0">Your practice history stays in your own browser's storage. I never see your scores.</p>
+    </div>
+    <div class="card" style="border-color:#6e5620;background:rgba(245,177,61,.05)">
+      <h3>Read this before you pay</h3>
+      <p class="sm mb0">This does not get you hired, and no score here counts for anything outside this site. It will not tell you
+      the real questions — those are non-disclosure-protected and change per project. What it does is make the <b>format</b>
+      familiar, so the unpaid hours you spend on a real assessment are your first and only pass at it. If that is not what you
+      need, don't buy it — the free <a href="guide.html">guide</a> covers the same ground in prose.</p>
+    </div>
+  </div>
+</div>
+
+<script src="js/storage.js"></script>
+<script src="js/access.js"></script>
+<script src="js/app.js"></script>
+<script>
+/* --- Wire this to a real checkout, then it issues keys automatically. Placeholders below. --- */
+var CHECKOUT = {
+  ngn: 'PASTE_PAYSTACK_OR_FLUTTERWAVE_PAYMENT_LINK',   // ₦ plans, local cards + transfer
+  usd: 'PASTE_STRIPE_OR_LEMONSQUEEZY_PAYMENT_LINK'     // $ plans, international cards
+};
+[].forEach.call(document.querySelectorAll('.buy'), function (b) {
+  b.onclick = function () {
+    var link = b.dataset.cur === 'NGN' ? CHECKOUT.ngn : CHECKOUT.usd;
+    if (!/^https?:/.test(link)) {
+      if (typeof App !== 'undefined' && App.toast) {
+        App.toast('Checkout not wired yet: set CHECKOUT.' + (b.dataset.cur === 'NGN' ? 'ngn' : 'usd') + ' in buy.html (see DEPLOY.md)', 'warn');
+      }
+      var note = document.getElementById('todo');
+      if (note) { note.style.display = 'block'; if (note.scrollIntoView) note.scrollIntoView({ block: 'center' }); }
+      return;
+    }
+    location.href = link + (link.indexOf('?') > 0 ? '&' : '?') + 'ref=' + b.dataset.plan;
+  };
+});
+</script>
+<div id="todo" class="wrap" style="display:none;margin:0 0 60px">
+  <div class="alert warn"><span class="ic">!</span><div><b>Two lines to fill before this page can take money.</b>
+  Put your payment link in <code>CHECKOUT</code> at the bottom of <code>buy.html</code>, and point your fulfilment
+  webhook (or a manual step) at <code>node tools/keygen.js new --label "buyer name" --days 90</code>.
+  Full instructions: <a href="DEPLOY.md">DEPLOY.md</a>.</div></div>
+</div>
+</body>
+</html>
