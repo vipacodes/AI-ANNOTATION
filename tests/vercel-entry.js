@@ -129,6 +129,11 @@ const get = (p, opts) => new Promise((resolve, reject) => {
     y = await get('/js/tasks.js', { headers: { cookie: 'at_key=' + KEY } });
     need(y.status === 200 && /window\.Tasks/.test(y.body) && y.body.length > 1000,
       'and the real corpus, not the empty stub', y.status + ' ' + y.body.length + 'B');
+    // The asymmetry that bit production: .html paths consulted the mirror and .js paths returned the
+    // stub unconditionally, so a subscriber got the graded workspace and an empty window.Tasks.
+    const anonJs = await get('/js/tasks.js');
+    need(anonJs.status === 402 && anonJs.body.length < 200,
+      'a keyless visitor still gets the 94-byte stub even with a mirror configured', anonJs.status + ' ' + anonJs.body.length + 'B');
     y = await get('/index.html', { headers: { cookie: 'at_key=' + KEY } });
     need(y.status === 200, 'free pages are unaffected by the mirror branch', y.status);
     server.close();

@@ -236,6 +236,14 @@ async function nextHandler(request, srcReq) {
     // deploy/gate-fallback.html. A paywall that works because a file is absent cannot be bypassed by
     // routing precedence.
     if (/\.js$/.test(rel)) {
+      // Reaching here means the gate ALREADY accepted this request (the stub-for-no-key branch lives in
+      // the Cloudflare module), so a mirror may answer. Without this, /js/tasks.js stayed 402 with the
+      // empty stub for a paid subscriber on Vercel while /task.html served fine one line later — the
+      // corpus is the product, so a key-holder with a shell and no data has bought nothing.
+      if (MIRROR_ORIGIN) {
+        const m = await fromMirror(rel, srcReq);
+        if (m) return m;
+      }
       return { status: 402, body: Buffer.from(STUB_JS[rel] || 'window.__locked=true;'), type: TYPES['.js'], cache: 'no-store' };
     }
     // Prefer the deployed copy (dev, Cloudflare); on Vercel it is not in the artifact, hence EMBED_GATE.
