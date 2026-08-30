@@ -69,6 +69,36 @@ function isPublic(p) { return PUBLIC.test(p); }/* Behind the key: the graded cor
    so the task data files are withheld too — locked requests get an empty stub instead. */
 const PROTECT = /^\/(?:task|queue|onboarding|detector|trust-safety|earnings)\.html$|^\/js\/(?:tasks|detector)\.js$|^\/data\//;
 
+/* ---- optional backend: verify keys against Supabase Postgres ----------------
+   Set SUPABASE_URL (+ SUPABASE_ANON_KEY, or SERVICE_ROLE_KEY) and the gate asks
+   public.key_check() instead of trusting a local secret file. You then get
+   instant revocation, buyer labels and a brute-force counter for free, from
+   anywhere the same database is reachable (Cloudflare function, this server,
+   a second box). Set ACCESS_MODE=local to force the offline path in tests.     */
+const SB_URL = (process.env.SUPABASE_URL || '').replace(/\/$/, '');
+const SB_KEY = process.env.SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || '';
+const SB_ON = !!SB_URL && !!SB_KEY && process.env.ACCESS_MODE !== 'local';
+function rpc(fn, args) {
+  return fetch(SB_URL + '/rest/v1/rpc/' + fn, {
+    method: 'POST',
+    headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY, 'content-type': 'application/json' },
+    body: JSON.stringify(args)
+  }).then((r) => r.json()).catch(() => null);
+}
+async function verifyAsync(key, req) {
+  const m = String(key || '').trim().match(/^([A-Za-z0-9]{6,10})\.([A-Za-z0-9_\-]{20,})\.(\d{10,13})$/);
+  if (!m) return { ok: false, error: 'Key format not recognised.' };
+  if (Number(m[3]) < Date.now()) return { ok: false, error: 'This key expired. Renew it from the payment receipt.' };
+  if (!SB_ON) return verifyKey(key);
+  const out = await rpc('key_check', { p_id: m[1], p_sig: m[2], p_exp: Number(m[3]) });
+  rpc('key_attempt', {
+    p_fp: String((req && req.headers && req.headers['x-forwarded-for']) || req.socket.remoteAddress || 'unknown').split(',')[0].trim(),
+    p_key_id: m[1], p_ok: !!(out && out.ok)
+  });
+  if (!out) return { ok: false, error: 'Backend unreachable, and local fallback is disabled in postgres mode.' };
+  return out;
+}
+
 function authed(req) {
   if (!GATE) return { label: 'gate disabled', until: null };
   const c = cookies(req);
@@ -76,6 +106,14 @@ function authed(req) {
   const hdr = req.headers['x-access-key'];
   if (hdr) { const v = verifyKey(hdr); if (v.ok) return v; }
   return null;
+}
+async function authedA(req) {
+  if (!GATE) return { label: 'gate disabled', until: null };
+  const c = cookies(req);
+  const k = c.at_key || req.headers['x-access-key'];
+  if (!k) return null;
+  const v = await verifyAsync(k, req);
+  return v.ok ? v : null;
 }
 
 function safeJoin(rel) {
@@ -101,14 +139,14 @@ const server = http.createServer(async (req, res) => {
   /* ---------- unlock flow ---------- */
   if (p === '/unlock' && req.method === 'POST') {
     const body = await readBody(req);
-    const v = body && verifyKey(body.key);
+    const v = body && await verifyAsync(body.key, req);
     if (!v || !v.ok) return json(res, 402, { error: (v && v.error) || 'Missing key.' });
     return json(res, 200, { label: v.label, until: v.until, id: v.id }, {
       'set-cookie': 'at_key=' + encodeURIComponent(body.key) + '; Path=/; Max-Age=7776000; HttpOnly; SameSite=Lax'
     });
   }
   if (p === '/session') {
-    const a = authed(req);
+    const a = await authedA(req);
     if (!a) return json(res, 402, { error: 'locked' });
     return json(res, 200, { label: a.label, until: a.until, mode: GATE ? 'server' : 'off' });
   }
@@ -145,13 +183,14 @@ const server = http.createServer(async (req, res) => {
   if (p === '/api/health') return json(res, 200, {
     ok: true, gate: GATE ? 'on' : 'off',
     protected: GATE ? ['/task.html', '/queue.html', '/onboarding.html', '/detector.html', '/trust-safety.html', '/earnings.html', '/js/tasks.js', '/js/detector.js'] : [],
+    backend: SB_ON ? 'supabase-postgres (revocation + rate limit)' : 'local HMAC (data/.secret)',
     note: 'protected files return 402 (HTML: gate screen, JS: empty stub) unless a valid key is presented'
   });
 
   /* ---------- static ---------- */
   if (p === '/') p = '/index.html';
   if (!path.extname(p)) p += '.html';
-  const a = authed(req);
+  const a = await authedA(req);
   if (GATE && !a && PROTECT.test(p) && !fs.existsSync(safeJoin('.' + p) || '')) {
     res.writeHead(404, { 'content-type': TYPES['.html'] });
     return res.end(fs.readFileSync(path.join(ROOT, '404.html'), 'utf8'));

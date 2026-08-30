@@ -108,6 +108,22 @@ Symptoms: `curl -I https://yoursite/task.html` returns **200** with no key (open
 pages render unstyled because `/css/app.css` got locked out (over-tight). `node tests/verify.js`
 checks the classification of 28 specific paths; run it after any edit to either list.
 
+## Option A2 · All-Supabase (one free tier, keys in Postgres)
+
+If you would rather not have a Cloudflare project either: `supabase/SETUP.md` runs the whole
+site from an Edge Function that serves a **private** storage bucket, and validates keys against
+`public.key_check` in Postgres. Same 402 rule, plus instant revocation, buyer labels, a
+brute-force counter, and key minting straight from a payment webhook:
+
+```bash
+supabase functions deploy annotate --no-verify-jwt
+curl -sI $FUNCTION_URL/task.html | head -1     # 402 = the lock works
+```
+
+`server.js` also speaks that backend with no code change — just
+`SUPABASE_URL=… SERVICE_ROLE_KEY=… node server.js` (`/api/health` will say
+`backend: supabase-postgres`). Set `ACCESS_MODE=local` to force the offline HMAC path.
+
 ## Making the paywall actually hold
 
 Ranked by how much they're worth. Do 1–3.
@@ -159,4 +175,6 @@ Ranked by how much they're worth. Do 1–3.
 - [ ] Buy button opens a real checkout, not the `PASTE_…` placeholder
 - [ ] Footer + `buy.html` carry the non-affiliation line
 - [ ] You have written down where `ANNOTATE_SECRET` lives (losing it invalidates every key)
+- [ ] If using Supabase: the `ANNOTATE_SECRET` row in `public.app_config` is byte-identical to
+      `node tools/keygen.js secret`, and `service_role` appears only in function secrets
 - [ ] `robots.txt` disallows `/task.html`, `/queue.html`, `/api/` so the paywall isn't indexed
