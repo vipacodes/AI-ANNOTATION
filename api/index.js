@@ -49,7 +49,7 @@ module.exports = async function vercelHandler(req, res) {
     // object nextHandler returns for internal use; an awaited undefined is how every free page turned
     // into a 500 the first time this ran.
     const next = async () => {
-      const r = await nextHandler({ url: path, headers: { 'x-invoke-path': path } });
+      const r = await nextHandler({ url: path, headers: { 'x-invoke-path': path } }, request);
       return new Response(r.body, {
         status: r.status, headers: { 'content-type': r.type, 'cache-control': r.cache || 'no-store' }
       });

@@ -23,6 +23,16 @@ const path = require('path');
 // runs this module a second time against a throwaway copy with those patterns applied, so "the paid
 // file is not on the server" is verified rather than assumed. ANNOTATE_DEPLOY_ROOT is how it points
 // there; nothing about the production path changes.
+// The gate module reads its whole configuration at LOAD time, as top-level consts
+// (`globalThis.env?.SUPABASE_ANON_KEY`, and MODE derived from it). Vercel's Node runtime has no such
+// global — on Cloudflare Pages it is injected, on Vercel it is process.env — so this shim is what makes
+// the two hosts agree. It has to be installed here, before anything imports the gate: the previous
+// placement, inside the readFileSync-and-eval fallback, meant the mode depended on WHICH ROUTE loaded
+// the module. Bundled in, the gate came up in hmac mode with no secret and every key on earth was
+// refused ("Server has neither a Postgres backend nor ANNOTATE_SECRET"); eval'd in, it was postgres.
+// A paywall whose behaviour depends on module-loading trivia is not a paywall.
+globalThis.env = Object.assign({}, process.env);
+
 const ROOT = process.env.ANNOTATE_DEPLOY_ROOT || path.join(__dirname, '..');
 const FN = path.join(ROOT, 'deploy/cloudflare-pages-function.js');
 
@@ -51,7 +61,6 @@ async function loadGate() {
   // 4. last resort, and the one that used to be the only one: evaluate the source ourselves
   tries.push(() => {
     const src = fs.readFileSync(FN, 'utf8').replace(/^export\s+async\s+function\s+onRequest/m, 'async function onRequest');
-    globalThis.env = Object.assign({}, process.env);   // the gate reads config as globalThis.env.X
     return new Function(src + '\nreturn { onRequest };')().onRequest;
   });
   for (const t of tries) {
@@ -61,7 +70,53 @@ async function loadGate() {
   throw new Error('no gate route worked [' + LOAD_ERRORS.join(' | ') + ']');
 }
 
+/* Where a Vercel-only deployment gets PAID content from, once the key has been accepted.
+ *
+ * .vercelignore keeps the paid corpus out of this deployment — that is what makes the paywall
+ * un-bypassable by rewrite precedence — so `nextHandler` has no file to return even for a legitimate
+ * subscriber, and a paid customer used to get the lock screen back. The bytes do exist, in the private
+ * bucket the Supabase function reads. So a Vercel request that the gate has ALREADY cleared is
+ * re-checked against that function: the mirror forwards the visitor's cookie and the origin's own gate
+ * decides again. Two independent decisions, both fail-closed; if either regex drifts, the visitor gets a
+ * 402 with the lock screen rather than a leaked file.
+ *
+ * ANNOTATE_MIRROR is the override used by the test (point it at a stub origin) and by anyone who
+ * re-hosts the origin; it defaults to the same SUPABASE_URL the gate's key verification already uses,
+ * and it is refused when it points back at this deployment, which would recurse forever. */
+const MIRROR_ORIGIN = (function () {
+  let u = process.env.ANNOTATE_MIRROR || process.env.SUPABASE_URL || 'https://veecksfcnlpppzvplcyt.supabase.co';
+  u = String(u).replace(/\/+$/, '');
+  if (!/^https?:\/\//.test(u)) return '';
+  if (u.indexOf('.vercel.app') >= 0 || u.indexOf('localhost') >= 0 || u.indexOf('127.0.0.1') >= 0) return '';
+  // SUPABASE_URL names the PROJECT (it is what key verification uses), but the site is served by the
+  // function mounted under it. Handing the project root to a GET /task.html returns Supabase's own
+  // 404 page, which the caller would read as "the mirror declined" forever. An explicit
+  // ANNOTATE_MIRROR is taken verbatim, because whoever set it knows what is behind it.
+  if (!process.env.ANNOTATE_MIRROR && u.indexOf('/functions/') < 0 && /supabase(\.co|\.in)/.test(u)) {
+    u = u + '/functions/v1/annotate';
+  }
+  return u;
+})();
+
 const PREFIX = '/api/index';
+/** One GET to the gated origin for an asset this deployment refuses to carry. Any error is "no
+ *  answer", not "serve nothing anyway": the caller falls back to the lock screen. */
+async function fromMirror(rel, srcReq) {
+  try {
+    const h = { accept: '*/*' };
+    const ck = srcReq && srcReq.headers && srcReq.headers.get && srcReq.headers.get('cookie');
+    if (ck) h.cookie = ck;                        // the origin's gate decides with the same cookie
+    const res = await fetch(MIRROR_ORIGIN + rel, {
+      method: 'GET', headers: h, redirect: 'manual', cache: 'no-store',
+      signal: AbortSignal.timeout ? AbortSignal.timeout(6000) : undefined
+    });
+    if (!res.ok) return null;                      // 402 / 404 / 5xx all mean: do not serve
+    const type = res.headers.get('content-type') || 'application/octet-stream';
+    if (/^text\/html/i.test(type) && /Locked · AnnotateTrainer/.test(await res.clone().text())) return null;
+    return { status: 200, body: Buffer.from(await res.arrayBuffer()), type, cache: 'no-store' };
+  } catch (e) { storeErr('mirror ' + rel + ': ' + String(e.message).slice(0, 80)); return null; }
+}
+
 function originalPath(req) {
   const raw = req.headers['x-invoke-path'] || req.headers['x-vercel-invoke-path'] || '';
   let p = raw ? decodeURIComponent(raw) : (req.url || '/');
@@ -85,9 +140,6 @@ const TYPES = {
 const PUBLIC_ASSET = /^\/(?:css|js|assets)\/[^/]+$/;
 const PROTECTED = /^\/(?:task|queue|onboarding|detector|trust-safety|earnings)\.html$|^\/js\/(?:tasks|detector)\.js$|^\/data\//;
 
-// The paid corpus, served as an empty stub instead of the real file — the same choice the Supabase and
-// Cloudflare variants make. Kept inline because the real file is NOT DEPLOYED (see .vercelignore), so
-// there is nothing on disk to withhold here.
 /* The two bodies a Vercel request needs but the deployment does not carry, embedded verbatim.
    deploy/gate-fallback.html and 404.html exist in the repo, yet Vercel's function artifact is the traced
    import graph — __dirname is /var/task and there is no deploy/ beside it, so reading either file at
@@ -154,13 +206,16 @@ const EMBED_404 = `<!DOCTYPE html>
 <script src="js/storage.js"></script><script src="js/app.js"></script><script>App.banner();</script>
 </body></html>`;
 
+// The paid corpus, served as an empty stub instead of the real file — the same choice the Supabase and
+// Cloudflare variants make. Kept inline because the real file is NOT DEPLOYED (see .vercelignore), so
+// there is nothing on disk to withhold here.
 const STUB_JS = {
   '/js/tasks.js': 'window.Tasks={list:function(){return[]},get:function(){return null},count:0};window.POLICY={};',
   '/js/detector.js': 'window.Detector={analyze:function(){return{index:null,locked:true,features:[],tips:[]}}};'
 };
 
-/** The `next()` a Pages function expects: serve from disk, or 404 — never hand back an ungated page. */
-async function nextHandler(request) {
+/** The `next()` a Pages function expects: serve from disk, or the mirror, or 404 — never ungated. */
+async function nextHandler(request, srcReq) {
   const p = originalPath(request);
   const rel = p === '/' ? '/index.html' : p;
   const abs = path.join(ROOT, rel);
@@ -184,6 +239,13 @@ async function nextHandler(request) {
       return { status: 402, body: Buffer.from(STUB_JS[rel] || 'window.__locked=true;'), type: TYPES['.js'], cache: 'no-store' };
     }
     // Prefer the deployed copy (dev, Cloudflare); on Vercel it is not in the artifact, hence EMBED_GATE.
+    // Nothing on disk, but this path is the product: if the gate let it through, ask the origin that
+    // actually holds the bytes. It re-applies its own 402 to the same cookie, so this cannot serve a
+    // file to a visitor the Vercel copy merely failed to classify.
+    if (MIRROR_ORIGIN) {
+      const m = await fromMirror(rel, srcReq);
+      if (m) return m;
+    }
     const g = path.join(ROOT, 'deploy/gate-fallback.html');
     const body = fs.existsSync(g) ? fs.readFileSync(g) : Buffer.from(EMBED_GATE);
     return { status: 402, body, type: TYPES['.html'], cache: 'no-store' };
@@ -233,4 +295,4 @@ function makeFetch(baseOrigin) {
 const LOAD_ERRORS = [];
 function storeErr(m) { LOAD_ERRORS.push(m); }
 
-module.exports = { loadGate, originalPath, nextHandler, makeFetch, TYPES, ROOT, PREFIX, LOAD_ERRORS };
+module.exports = { loadGate, originalPath, nextHandler, fromMirror, MIRROR_ORIGIN, makeFetch, TYPES, ROOT, PREFIX, LOAD_ERRORS };

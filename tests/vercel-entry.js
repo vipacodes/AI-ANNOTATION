@@ -16,9 +16,14 @@ const { spawnSync } = require('child_process');
 // In --no-fallback mode the parent hands us a scratch tree to stand in for a bundled runtime, and ROOT
 // must move with it: the handler resolves its files from here, and an un-redirected ROOT made the first
 // version of that check delete the real deploy/gate-fallback.html from the working tree.
-const ROOT = process.argv.indexOf('--no-fallback') >= 0
-  ? (process.argv[process.argv.indexOf('--no-fallback') + 1] || path.join(__dirname, '..'))
-  : path.join(__dirname, '..');
+const ROOT = (function (av) {
+  const i = av.indexOf('--no-fallback') >= 0 ? av.indexOf('--no-fallback') : -1;
+  return i >= 0 ? (av[i + 1] || path.join(__dirname, '..')) : path.join(__dirname, '..');
+})(process.argv);
+// The child that tests the mirror needs to know which origin it was pointed at. Read from the env at
+// each use, not a top-level const: the mirror/no-fallback blocks run before that const initialises, and
+// a TDZ error is a terrible way to find out your test file has a control-flow assumption in it.
+const mirrorTestEnv = () => process.env.ANNOTATE_MIRROR || '';
 let pass = 0; const fails = [];
 const need = (c, name, note) => { if (c) { pass++; console.log('   \u2713 ' + name); } else { fails.push(name + (note ? '  - ' + note : '')); console.log('   \u2717 ' + name + (note ? '  - ' + String(note).slice(0, 120) : '')); } };
 
@@ -101,6 +106,35 @@ const get = (p, opts) => new Promise((resolve, reject) => {
     console.log('\n' + '='.repeat(56));
     if (fails.length) { fails.forEach((f2) => console.log('   - ' + f2)); console.log('\u2717 no-fallback: ' + fails.length + ' failure(s)'); process.exit(1); }
     console.log('\u2713 no-fallback: the embedded bodies carry the lock screen and the 404 (3 checks)');
+    return;
+  }
+
+
+  // The mirror path: .vercelignore removes the paid corpus from the deployment, so an AUTHENTICATED
+  // Vercel visitor had nothing to be served and got the lock screen they had just paid past. This runs
+  // the real handler with ANNOTATE_MIRROR set, against the live gated origin, using the owner key from
+  // $HOME when it is present — the only way to know whether "ask the origin for the bytes" works, since
+  // no local fixture holds a copy of the private bucket.
+  if (process.argv.indexOf('--mirror') >= 0) {
+    const KEY = (fs.existsSync('/home/user/.owner-key') ? fs.readFileSync('/home/user/.owner-key', 'utf8').trim() : '');
+    need(!!KEY, 'fixture: owner key is available to test the authenticated path', 'no ~/.owner-key');
+    need(mirrorTestEnv() && /^https?:\/\//.test(mirrorTestEnv()), 'the child is pointed at an explicit origin', mirrorTestEnv());
+    let y = await get('/task.html');
+    need(y.status === 402 && /Unlock/.test(y.body), 'anonymous visitor still gets the lock screen, mirror or no mirror',
+      y.status + ' ' + y.body.slice(0, 60));
+    need(y.status !== 200, 'the mirror cannot be used to read a protected page without a key', 'leak');
+    y = await get('/task.html', { headers: { cookie: 'at_key=' + KEY } });
+    need(y.status === 200 && /AnnotateTrainer|Practise|task/i.test(y.body) && y.body.length > 900,
+      'a key-holder gets the REAL paid page through the mirror', y.status + ' ' + y.body.length + 'B ' + y.body.slice(0, 60));
+    y = await get('/js/tasks.js', { headers: { cookie: 'at_key=' + KEY } });
+    need(y.status === 200 && /window\.Tasks/.test(y.body) && y.body.length > 1000,
+      'and the real corpus, not the empty stub', y.status + ' ' + y.body.length + 'B');
+    y = await get('/index.html', { headers: { cookie: 'at_key=' + KEY } });
+    need(y.status === 200, 'free pages are unaffected by the mirror branch', y.status);
+    server.close();
+    console.log('\n' + '='.repeat(56));
+    if (fails.length) { fails.forEach((f2) => console.log('   - ' + f2)); console.log('\u2717 mirror: ' + fails.length + ' failure(s)'); process.exit(1); }
+    console.log('\u2713 mirror: ' + pass + ' checks passed (authenticated content reaches a Vercel-only deploy)');
     return;
   }
 
@@ -249,6 +283,55 @@ const get = (p, opts) => new Promise((resolve, reject) => {
   fsx.rmSync(dir, { recursive: true, force: true });
 
 
+
+
+  // The mirror, exercised for real. Silent when there is no owner key to test with, because a test that
+  // asserts "network worked" on a machine with no network is just a flaky test.
+  const mirrorOrigin = 'https://veecksfcnlpppzvplcyt.supabase.co/functions/v1/annotate';
+  // The gate refuses every key when it has neither a Postgres backend nor a secret — correctly, and the
+  // reason this child needs the anon key: without it the mirror test measures a fail-closed gate
+  // instead of the mirror. Same file the buyer-flow tool reads; absent means offline machine or fresh
+  // clone, and the honest answer is to say so rather than assert a skip as a pass.
+  const anonKey = fs.existsSync('/home/user/.anon-key') ? fs.readFileSync('/home/user/.anon-key', 'utf8').trim() : '';
+  if (fs.existsSync('/home/user/.owner-key') && anonKey) {
+    const c4 = require('child_process').spawn(process.execPath, [__filename, '--mirror'],
+      { cwd: ROOT, env: Object.assign({}, process.env, { ANNOTATE_MIRROR: mirrorOrigin, SUPABASE_ANON_KEY: anonKey }), encoding: 'utf8', timeout: 120000 });
+    let o4 = ''; c4.stdout.on('data', (d) => { o4 += d; }); const e4 = []; c4.stderr.on('data', (d) => e4.push(d));
+    const code4 = await new Promise((rr) => c4.on('exit', rr));
+    need(code4 === 0, 'Vercel-only deploy + mirror serves paid content to key-holders and nobody else',
+      (o4.split('\n').filter((l) => /\u2717|failure/.test(l)).slice(0, 2).join(' | ') || e4.join('').slice(0, 200)).slice(0, 260));
+    console.log(o4.split('\n').filter((l) => /\u2713/.test(l)).map((l) => '     ' + l.trim()).join('\n'));
+  } else {
+    console.log('   \u2013 mirror test skipped (needs ~/.owner-key and ~/.anon-key; set ANNOTATE_MIRROR to run it by hand)');
+  }
+  // The anti-recursion guard, asserted by ASKING the module rather than by reading its source: a mirror
+  // that resolves back to this same deployment would make every paid request a self-inflicted loop.
+  const probeOut = require('child_process').execSync(
+    "for u in 'https://x.vercel.app' 'http://127.0.0.1:9' 'http://localhost:8765'; do " +
+    "ANNOTATE_MIRROR=$u node -e \"const o=require('./api/_gate.js').MIRROR_ORIGIN;console.log(o?'ok':'refused')\"; done",
+    { cwd: ROOT, encoding: 'utf8', timeout: 40000 }).trim().split('\n').join(' ');
+  need(probeOut.split(' ').filter(Boolean).length === 3 && probeOut.indexOf('ok') < 0,
+    'the mirror refuses .vercel.app, localhost and 127.0.0.1 origins (no self-referential loop)', probeOut.slice(0, 120));
+  const defOut = require('child_process').execSync(
+    "node -e \"console.log(require('./api/_gate.js').MIRROR_ORIGIN)\"",
+    { cwd: ROOT, encoding: 'utf8', timeout: 40000 }).trim();
+  need(/supabase\.co\/functions\/v1\/annotate$/.test(defOut),
+    'with no override the mirror is the gated function, not the project root', defOut);
+
+  // globalThis.env must be installed BEFORE the gate module is loaded, because the gate reads
+  // SUPABASE_ANON_KEY at module top level and derives MODE from it. When that assignment lived inside
+  // the eval fallback, the gate's mode silently depended on which loader route happened to work: on the
+  // bundled path it came up in hmac mode with no secret and refused every key that exists.
+  const gateSrc = fs.readFileSync(path.join(ROOT, 'api/_gate.js'), 'utf8');
+  const iEnv = gateSrc.indexOf('globalThis.env = Object.assign');
+  const iReq = gateSrc.search(/require\('\.\/gate-bundled\.js'\)/);
+  need(iEnv >= 0 && iReq >= 0 && iEnv < iReq,
+    'the env shim is installed before any route loads the gate module', 'env@' + iEnv + ' first-require@' + iReq);
+  const childOut = require('child_process').execSync(
+    "SUPABASE_ANON_KEY=x node -e \"require('./api/_gate.js').loadGate().then(() => " +
+    "console.log(JSON.stringify({mode:(globalThis.env&&globalThis.env.SUPABASE_ANON_KEY)?'postgres-seen':'missing'})))\"",
+    { cwd: ROOT, encoding: 'utf8', timeout: 60000 }).trim();
+  need(/postgres-seen/.test(childOut), 'with the anon key in process.env the gate sees it at load', childOut.slice(0, 120));
 
   // Static drift guard, and the actual cause of the failed production deploy this file exists to
   // prevent. Vercel emits a function artifact from api/index.js plus what it can TRACE through

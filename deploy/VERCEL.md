@@ -68,11 +68,25 @@ vercel.json
     precedence. `nextHandler` then synthesises the 402 itself, from `deploy/gate-fallback.html`, because
     `gate.html` is excluded too — a missing file must not turn a lock screen into a 404.
 
-    The cost of this design: a Vercel deployment cannot serve the paid pages at all, even to a keyholder.
-    That is deliberate, and it is the second reason payments live on the Supabase deployment. If you
-    want the graded workspace on Vercel, the answer is not a cleverer rewrite — it is serving those
-    bytes from the same private storage the Supabase function reads, which is a real feature, not a
-    config change.
+    The cost of that design was: a Vercel deployment could not serve the paid pages at all, even to a
+    keyholder — the lock screen was the best answer it had, and a subscriber who unlocked and paid would
+    read it as a broken product. (For one deploy that is exactly what happened: `/unlock` said
+    `{"ok":true,"label":"Owner access · 90 days"}` while `/task.html` stayed 402.)
+
+    It is fixed by the mirror, not by a cleverer rewrite: after the gate clears a request, `nextHandler`
+    GETs that same path from the gated origin, forwarding the visitor's cookie, so the *origin's* gate
+    decides again against the same key database. Both decisions fail closed and either can deny, so a
+    regex drifting on one host cannot leak on the other. It needs `ANNOTATE_MIRROR` only if the origin is
+    not the default one — set it under Project Settings → Environment Variables → Production, or
+
+        POST /v10/projects/<project>/env  {"key":"ANNOTATE_MIRROR","value":"https://<ref>.supabase.co/functions/v1/annotate","type":"encrypted","target":["production"]}
+
+    Without it the mirror falls back to `SUPABASE_URL` + `/functions/v1/annotate` (the project root
+    would answer Supabase's own 404, which reads as "the origin declined"). It refuses to point at
+    `.vercel.app`, `localhost` or `127.0.0.1`, because a mirror that resolves back to this deployment is
+    a request loop. `tests/vercel-entry.js --mirror` exercises the whole path against the live origin and
+    asserts both directions: a key-holder gets 200 and 23 KB of graded workspace, an anonymous visitor
+    still gets the lock screen.
 
     Add a page to PROTECT? Add it here in the same commit. `tests/vercel-entry.js` fails if the two
     lists drift, and a second phase of that test copies the repo minus .vercelignore into a temp
