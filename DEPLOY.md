@@ -83,6 +83,36 @@ ANNOTATE_SECRET=$(node tools/keygen.js secret) PORT=4173 node server.js
 
 ---
 
+## C · Payments → automatic key delivery — already built, needs two secrets
+
+The edge function serves `POST /fulfill`, which takes a payment reference and returns a key:
+
+    curl -s -X POST $F/fulfill -H 'content-type: application/json' \
+      -d '{"ref":"6789012345","plan":"season"}'
+    # → {"key":"Ab3xK9….….1795…, "until":"2026-11-28","label":"ada@example.com · paystack 6789012345"}
+
+It is safe to expose because the caller is not the trust boundary — the reference is re-verified
+with the provider before anything is written:
+
+| step | what fails without it |
+|---|---|
+| `PAY_PROVIDER` + `PAY_SECRET_KEY` | the endpoint answers 503 and mints nothing; it never trusts the browser |
+| provider says `status = success` | a fake or unpaid reference cannot mint |
+| amount ≥ plan **and** currency match | a ₦6,000 receipt cannot buy the ₦18,000 plan (amounts compared in kobo/cents) |
+| `note = reference` uniqueness | the same receipt pasted twice returns 409, not a second key |
+| `MINT_SECRET` in the function env | `key_mint` stays service-role-only; no secret ever reaches the client |
+
+Plans and prices are in `PLANS` in `supabase/functions/annotate/index.ts`; they must agree with
+`buy.html`. To take money, paste two links into `CHECKOUT` in `buy.html` and set the three secrets:
+
+    supabase secrets set PAY_PROVIDER=paystack PAY_SECRET_KEY=sk_live_… MINT_SECRET=…
+
+`buy.html` also has an "Already paid?" box: after Paystack returns the buyer, the reference in the
+query string redeems itself, and a buyer who closes the tab can paste it later. Point the
+provider's webhook at the same `/fulfill` route if you would rather keys arrive unattended —
+`{ref, plan}` is the whole contract. Until `PAY_SECRET_KEY` is set, `node tools/keygen.js new
+--sql` (or `key_mint` with `MINT_SECRET`) issues keys by hand; the gate itself is live either way.
+
 ## C · Payments → automatic key delivery
 
 **Take the money (Nigeria-first):**

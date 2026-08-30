@@ -90,11 +90,65 @@ var CHECKOUT = {
     location.href = link + (link.indexOf('?') > 0 ? '&' : '?') + 'ref=' + b.dataset.plan;
   };
 });
+
+/* --- the moment after payment: hand a reference back, get a key ---
+   Paystack/Flutterwave return the buyer to this URL with their reference in the query string. The
+   reference is verified SERVER-side (/fulfill re-checks amount, currency and status with the
+   provider and only then mints), so nothing typed into this form can produce a key on its own. */
+function redeem(ref) {
+  var box = document.getElementById('redeem');
+  if (!box) return;
+  box.style.display = 'block';
+  var out = document.getElementById('redeem-out');
+  out.textContent = 'Checking that reference with the payment provider\u2026';
+  fetch('fulfill', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ref: ref, plan: box.dataset.plan || 'season' }) })
+    .then(function (r) { return r.json().then(function (j) { return { c: r.status, j: j }; }); })
+    .then(function (r) {
+      if (r.c === 200 && r.j.key) {
+        out.innerHTML = '<b>Verified.</b> Your key, and it is in your receipt too:<br><code style="font-size:14px;word-break:break-all">' + r.j.key + '</code>' +
+          '<div class="row" style="margin-top:10px"><a class="btn" href="gate.html">Unlock now</a></div>';
+      } else {
+        out.textContent = (r.j && r.j.error) || 'Could not verify that reference.';
+      }
+    })
+    .catch(function () { out.textContent = 'Could not reach the server. Try again in a minute.'; });
+}
+(function () {
+  var q = new URLSearchParams(location.search);
+  var ref = q.get('reference') || q.get('trxref') || q.get('pay_ref') || q.get('ref_id') || '';
+  var box = document.getElementById('redeem');
+  if (box) box.dataset.plan = q.get('ref') || q.get('plan') || 'season';
+  if (ref) redeem(ref);
+})();
+</script>
+<div id="redeem" class="wrap" style="display:none;margin:0 0 60px" data-plan="season">
+  <div class="panel" style="padding:20px 22px">
+    <div class="mono" style="font-size:10px;letter-spacing:.1em;color:var(--dim);text-transform:uppercase">Already paid?</div>
+    <p class="dim" style="margin:8px 0 12px;font-size:13.5px">Paste the reference from your receipt (<code>6789012345</code>,
+    <code>FLW-…</code>, <code>paystack_…</code>). It is checked with the provider before a key is issued —
+    this form cannot be talked into handing one out.</p>
+    <div class="row"><input id="redeem-ref" placeholder="payment reference" style="min-width:240px">
+      <button class="btn" id="redeem-go">Get my key</button></div>
+    <p id="redeem-out" class="mono" style="font-size:12.5px;min-height:20px;margin:12px 0 0"></p>
+  </div>
+</div>
+<script>
+(function () {
+  var g = document.getElementById('redeem-go');
+  if (g) g.onclick = function () {
+    var v = (document.getElementById('redeem-ref').value || '').trim();
+    if (v) redeem(v);
+  };
+})();
 </script>
 <div id="todo" class="wrap" style="display:none;margin:0 0 60px">
   <div class="alert warn"><span class="ic">!</span><div><b>Two lines to fill before this page can take money.</b>
-  Put your payment link in <code>CHECKOUT</code> at the bottom of <code>buy.html</code>, and point your fulfilment
-  webhook (or a manual step) at <code>node tools/keygen.js new --label "buyer name" --days 90</code>.
+  Put your checkout link in <code>CHECKOUT</code> below, then give this function two secrets —
+  <code>PAY_PROVIDER</code> (paystack or flutterwave) and <code>PAY_SECRET_KEY</code> (your provider's
+  <em>secret</em> key) — plus <code>MINT_SECRET</code> for the key store. That is all: <code>/fulfill</code>
+  verifies each reference with the provider before minting, so the "Already paid?" box above works with
+  no webhook endpoint to build, and you can point the provider's webhook at the same
+  <code>/fulfill</code> if you would rather keys arrive without the buyer pasting anything.
   Full instructions: <a href="DEPLOY.md">DEPLOY.md</a>.</div></div>
 </div>
 </body>

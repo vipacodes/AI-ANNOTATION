@@ -38,9 +38,11 @@ const SUPABASE_URL = env('PROJECT_URL') || env('SUPABASE_URL');
 const SERVICE_KEY = env('SERVICE_ROLE_KEY') || env('SERVICE_KEY');
 const ANON_KEY = env('ANON_KEY') || env('SUPABASE_ANON_KEY') || env('PUBLISHABLE_KEY');
 
-// Bump on deploy when debugging: GET /api/health reports it, so "is my code actually live?" is a
-// curl, not a guess. (A stale deployment looked exactly like a broken bucket for one whole session.)
-const BUILD = 'annotate-2026-08-30.2';
+// Bump this on every deploy. GET /api/health reports it, which turns "is my code actually live?"
+// into a curl. It earned its place: Supabase accepted two deploys in a row while the worker kept
+// serving the previous build, so a route I had just added looked like it was missing from the code.
+// Every "that cannot happen" debugging loop in this file started with a stale build marker.
+const BUILD = 'annotate-2026-08-30.4';
 
 const KEY_RE = /^([A-Za-z0-9]{6,10})\.([A-Za-z0-9_\-]{20,})\.(\d{10,13})$/;
 const KEY_COOKIE = 'at_key';
@@ -136,6 +138,74 @@ async function verify(key, req) {
   return { ok: true, id, label: id, until: new Date(Number(exp)).toISOString().slice(0, 10) };
 }
 
+/* ---- fulfilment: verify a payment, then mint ---- */
+const PLANS: Record<string, { label: string; amount: number; currency: string; days: number }> = {
+  week: { label: '7-day access', amount: 6000, currency: 'NGN', days: 7 },
+  season: { label: '90-day access', amount: 18000, currency: 'NGN', days: 90 },
+  usd: { label: '90-day access (USD)', amount: 1800, currency: 'USD', days: 90 }
+};
+
+/* Provider verification. Paystack and Flutterwave both expose a GET-by-reference that returns the
+   amount, currency and status, and both amounts are in minor units (kobo/cent) - comparing a
+   formatted "18000" against 1800000 is how a ₦6,000 plan buys the ₦18,000 one. */
+async function fulfil(ref: string, planKey: string) {
+  // Validate the caller's input first: a wrong plan is the buyer's mistake and should read that
+  // way even before we notice the server has no provider key configured.
+  const plan = PLANS[planKey];
+  if (!plan) return { ok: false, status: 400, error: 'Unknown plan. Use week, season or usd.' };
+  const provider = (env('PAY_PROVIDER') || 'paystack').toLowerCase();
+  const pk = (env('PAY_SECRET_KEY') || '').trim();
+  if (!pk) return { ok: false, status: 503, error: 'Fulfilment is not configured on this server yet.' };
+
+  let paid: { email: string; amount: number; currency: string; status: string; reference: string } | null = null;
+  try {
+    if (provider === 'flutterwave') {
+      const r = await fetch('https://api.flutterwave.com/v3/transactions/' + encodeURIComponent(ref) + '/verify',
+        { headers: { Authorization: 'Bearer ' + pk } });
+      const j: any = await r.json();
+      if (j && j.data) paid = {
+        email: j.data.customer?.email || '', amount: Number(j.data.amount) || 0,
+        currency: String(j.data.currency || '').toUpperCase(),
+        status: String(j.data.status || '').toLowerCase(), reference: String(j.data.tx_ref || ref)
+      };
+    } else {
+      const r = await fetch('https://api.paystack.co/transaction/verify/' + encodeURIComponent(ref),
+        { headers: { Authorization: 'Bearer ' + pk } });
+      const j: any = await r.json();
+      if (j && j.data) paid = {
+        email: j.data.customer?.email || '', amount: Number(j.data.amount) || 0,
+        currency: String(j.data.currency || '').toUpperCase(),
+        status: String(j.data.status || '').toLowerCase(), reference: String(j.data.reference || ref)
+      };
+    }
+  } catch (e) {
+    return { ok: false, status: 502, error: 'Could not reach the payment provider. Try again in a minute.' };
+  }
+  if (!paid) return { ok: false, status: 402, error: 'That reference was not found at the payment provider.' };
+  if (paid.status !== 'success') return { ok: false, status: 402, error: 'That payment is not settled yet (status: ' + paid.status + ').' };
+  if (paid.amount < plan.amount) return { ok: false, status: 402, error: 'That payment was ' + paid.amount + ' ' + paid.currency + '; this plan is ' + plan.amount + '.' };
+  if (paid.currency !== plan.currency) return { ok: false, status: 402, error: 'That payment was made in ' + paid.currency + ', which does not match this plan.' };
+
+  // one key per reference: a receipt is a one-time credential, and re-posting the same reference
+  // to a webhook (providers retry) must never mint a second key
+  const seen = await fetch(SUPABASE_URL + '/rest/v1/access_keys?select=id&note=eq.' + encodeURIComponent(ref) + '&limit=1',
+    { headers: { apikey: SERVICE_KEY, Authorization: 'Bearer ' + SERVICE_KEY } }).then((r) => r.json()).catch(() => []);
+  if (Array.isArray(seen) && seen.length) return { ok: false, status: 409, error: 'That payment already received a key. Check your original receipt, or reply to it if it is lost.' };
+
+  const label = (paid.email || 'buyer').slice(0, 120) + ' \u00b7 ' + provider + ' ' + ref;
+  const mint = await rpc('key_mint', { p_mint_secret: env('MINT_SECRET'), p_label: label, p_days: plan.days }, SERVICE_KEY);
+  if (mint.status !== 200 || !mint.json || !mint.json.key) {
+    return { ok: false, status: 502, error: 'Payment verified, but key delivery failed. Reply to your receipt and it will be issued by hand.' };
+  }
+  await fetch(SUPABASE_URL + '/rest/v1/access_keys?id=eq.' + encodeURIComponent(mint.json.id), {
+    method: 'PATCH',
+    headers: { apikey: SERVICE_KEY, Authorization: 'Bearer ' + SERVICE_KEY, 'content-type': 'application/json', Prefer: 'return=minimal' },
+    body: JSON.stringify({ note: ref })
+  }).catch(() => { });
+  // the key is also the receipt: return it to the browser and let the webhook caller relay it.
+  return { ok: true, key: mint.json.key, until: mint.json.until, label, email: paid.email };
+}
+
 /* ---- serving from the private bucket ---- */
 async function fromBucket(ctx, path) {
   const url = SUPABASE_URL + '/storage/v1/object/authenticated/' + BUCKET + path;
@@ -217,28 +287,26 @@ Deno.serve(async (req) => {
     const v = await verify(presented, req);
     return v.ok ? json(200, { label: v.label, until: v.until, mode: MODE }) : json(402, { error: v.error });
   }
-  /* ---------- the lock ---------- */
-  if (!presented || !(await verify(presented, req)).ok) {
-    if (isProtected(p)) {
-      if (/\.js$/.test(p)) {
-        // the product is the corpus; without a key you get an empty stub, not the file
-        const stub = p.indexOf('tasks.js') >= 0
-          ? 'window.Tasks={list:function(){return[]},get:function(){return null},count:0};window.POLICY={};'
-          : 'window.Detector={analyze:function(){return{index:null,locked:true,features:[],tips:[]}}};';
-        return new Response(stub, { status: 402, headers: { 'content-type': TYPES['.js'], 'cache-control': 'no-store' } });
-      }
-      if (/\.html$/.test(p)) {
-        return new Response(GATE_HTML, { status: 402, headers: { 'content-type': TYPES['.html'], 'cache-control': 'no-store' } });
-      }
-      return new Response('locked', { status: 402, headers: { 'content-type': 'text/plain' } });
-    }
-    if (!isPublic(p)) {
-      const nf = await fromBucket(ctx, '/404.html');
-      return new Response(nf.body, { status: 404, headers: { 'content-type': TYPES['.html'], 'cache-control': 'no-store' } });
-    }
+  /* ---- the extensionless API routes, matched BEFORE the lock ----
+     They must come first: the lock ends with "if (!isPublic(p)) → serve 404.html", and a route
+     like /fulfill is not a public page, so it was answered with the site's 404 page while the
+     handler below never ran. Only a real page path belongs in that fallback. */
+
+  /* ---------- fulfilment: a payment reference in, a key out ---------- */
+  // The trust boundary is NOT the caller, it is the provider: an unauthenticated visitor cannot
+  // mint keys because every reference is re-checked against Paystack/Flutterwave before a single
+  // row is written. MINT_SECRET lives in this function's environment (not the browser, not a
+  // webhook payload), which is the only reason the key_mint RPC can stay service-role-only.
+  if (p === '/fulfill' && req.method === 'POST') {
+    let body: any = {};
+    try { body = await req.json(); } catch (e) { }
+    const ref = String(body.ref || '').trim();
+    const plan = String(body.plan || '').trim().toLowerCase();
+    if (!/^[A-Za-z0-9_\-]{6,64}$/.test(ref)) return json(400, { error: 'Send the payment reference from your receipt.' });
+    const out = await fulfil(ref, plan);
+    return out.ok ? json(200, out) : json(out.status || 402, { error: out.error });
   }
 
-  /* ---------- serve ---------- */
   if (p === '/api/health') {
     return json(200, {
       ok: true, gate: 'on', backend: MODE, protected: 'server-side (402)',
@@ -266,7 +334,31 @@ Deno.serve(async (req) => {
     });
   }
   // /task -> /task.html, but only for paths that will be looked up as files
-  if (!/\.[a-z0-9]+$/i.test(p) && p !== '/unlock' && p !== '/session' && !/^\/api(\/|$)/.test(p)) p += '.html';
+
+  /* ---------- the lock ---------- */
+  if (!presented || !(await verify(presented, req)).ok) {
+    if (isProtected(p)) {
+      if (/\.js$/.test(p)) {
+        // the product is the corpus; without a key you get an empty stub, not the file
+        const stub = p.indexOf('tasks.js') >= 0
+          ? 'window.Tasks={list:function(){return[]},get:function(){return null},count:0};window.POLICY={};'
+          : 'window.Detector={analyze:function(){return{index:null,locked:true,features:[],tips:[]}}};';
+        return new Response(stub, { status: 402, headers: { 'content-type': TYPES['.js'], 'cache-control': 'no-store' } });
+      }
+      if (/\.html$/.test(p)) {
+        return new Response(GATE_HTML, { status: 402, headers: { 'content-type': TYPES['.html'], 'cache-control': 'no-store' } });
+      }
+      return new Response('locked', { status: 402, headers: { 'content-type': 'text/plain' } });
+    }
+    if (!isPublic(p)) {
+      const nf = await fromBucket(ctx, '/404.html');
+      return new Response(nf.body, { status: 404, headers: { 'content-type': TYPES['.html'], 'cache-control': 'no-store' } });
+    }
+  }
+
+  /* ---------- serve ---------- */
+  const API_ROUTES = /^\/(?:unlock|session|fulfill|api(?:\/|$))/;
+  if (!/\.[a-z0-9]+$/i.test(p) && !API_ROUTES.test(p)) p += '.html';
   // An extensionless path that reached here is not a page and not an RPC: answer plainly,
   // without asking the bucket for a file that cannot exist.
   if (!/\.[a-z0-9]+$/i.test(p)) return json(404, { error: 'No such route. Pages end in .html.' });

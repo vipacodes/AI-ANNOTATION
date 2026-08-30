@@ -149,6 +149,17 @@ const stub = http.createServer((req, res) => {
     need(norm('/annotate/').cookiePath === '/annotate', 'and so does a mount with a trailing slash', 'cookie path: ' + norm('/annotate/').cookiePath);
     need(norm('/api/health').route === '/api/health', 'a path that merely does NOT contain the slug is left alone (the -1 trap)', 'mangled: ' + norm('/api/health').route);
     need(norm('/index.html').route === '/index.html', 'no silent truncation when indexOf returns -1', 'mangled: ' + norm('/index.html').route);
+  /* ---- the extensionless routes are matched BEFORE the lock's 404 fallback ---- */
+  {
+    const sfb = fs.readFileSync(path.join(ROOT, 'supabase/functions/annotate/index.ts'), 'utf8');
+    const lockAt = sfb.indexOf('the lock ----------');
+    for (const route of ['/unlock', '/session', '/fulfill', '/api/health']) {
+      const at = sfb.indexOf("p === '" + route + "'");   // the route HANDLER, not a mention in a comment
+      need(at > 0 && at < lockAt, route + ' is routed before the lock, so it cannot be swallowed by the 404 fallback',
+        route + ' is at ' + at + ' vs lock at ' + lockAt);
+    }
+  }
+
     need(norm('/functions/v1/annotate/unlock').route === '/unlock', 'the POST route survives the mount too', 'mangled: ' + norm('/functions/v1/annotate/unlock').route);
     need(c.cookiePath !== '/', 'a mount-scoped cookie is never Path=/ (that would send the key to PostgREST and storage on the same host)', 'cookie path is /');
   }
