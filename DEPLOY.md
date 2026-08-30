@@ -214,12 +214,24 @@ report success: the Node auto-detect imports `server.js`, finds no exported hand
 URL, `js/tasks.js` (the paid corpus) included, with no error anywhere. The first is a broken site. The
 second is a leaked one, which is worse precisely because nothing looks wrong.
 
-`vercel.json` + `api/index.js` + `api/_gate.js` (committed) make a Vercel deploy route *everything*
-through the Cloudflare Pages gate — evaluated `beforeFiles`, because a rewrite that runs after the
-filesystem never sees a request for a file that exists. `deploy/VERCEL.md` is the full note: what each
-piece is for, the one env var that decides whether any key works at all, and the two payment surfaces
-(`/fulfill`, `/crypto/*`) that stay on the Supabase deployment. Pinned by `node tests/vercel-entry.js`
-(22 checks over real HTTP against the real handler, run by `tests/verify.js`).
+`vercel.json` + `api/index.js` + `api/_gate.js` + `.vercelignore` (committed) make a Vercel deploy both
+build and stay locked. Two facts, learned the hard way, that any future editor must keep:
+
+- **Vercel validates `vercel.json` against a JSON schema with `additionalProperties: false`.** One
+  extra key — even a `_comment` — fails the build outright. No comments in that file; notes go in
+  `deploy/VERCEL.md`.
+- **A rewrite cannot gate a file that exists.** Vercel applies the filesystem *before* rewrites, on
+  purpose, and says so in its own docs. So the protection is not `vercel.json` at all: it is
+  `.vercelignore` excluding every protected page and script from the deployment, so there is nothing for
+  the filesystem to prefer. The function then synthesises the 402 from `deploy/gate-fallback.html`
+  (because `gate.html` is excluded too), and `nextHandler` answers the paid `.js` files with the same
+  empty stub the other two variants use.
+
+Consequence worth stating: **the Vercel copy cannot serve the graded workspace to anyone**, keyholder
+included — which is the second reason payments and the paid corpus live on the Supabase deployment.
+`deploy/VERCEL.md` has the full note, including the env var that decides whether any key verifies at
+all. Pinned by `node tests/vercel-entry.js` (32 checks over real HTTP against the real handler, plus a
+second pass against a temp copy of the repo minus `.vercelignore`, run by `tests/verify.js`).
 
 ## A CDN in front of a paywall is a leak until you say otherwise
 

@@ -27,23 +27,57 @@ WHY THE COMMITTED CONFIG IS SHAPED THE WAY IT IS
 ================================================
 
 vercel.json
-    framework: null, no buildCommand, no `public`/`outputDirectory`. The repo root IS the site.
-    rewrites: [{ "source": "/((?!api/|_vercel/).*)", "destination": "/api/index" }]
+    { "$schema": "https://openapi.vercel.sh/vercel.json", "framework": null,
+      "functions": { "api/index.js": { "memory": 1024, "maxDuration": 30 } },
+      "rewrites": [ { "source": "/((?!_vercel/).*)", "destination": "/api/index" } ] }
 
-    The rewrite matters more than it looks, and its POSITION within vercel.json matters most.
-    Vercel evaluates route sources in a fixed order: a top-level `rewrites` entry is applied AFTER
-    filesystem lookups, while `rewrites.beforeFiles` is applied BEFORE them. Under the first ordering
-    `/task.html` is simply found on disk and served from the deployment, so the gate never sees the
-    request. The site works and the paywall does not — the silent version of the leak above, and the
-    one a generated config tends to produce, because "rewrite everything to a function" sounds like
-    the safe instruction and is the unsafe one unless it runs before the filesystem.
+    Two hard lessons are encoded in those nine lines.
 
-    Vercel also evaluates `beforeFiles` rewrites first, which is the only ordering consistent with
-    "no protected byte reaches a browser without a key". `vercel.json` here puts the catch-all where
-    it is evaluated before any file lookup, and the test suite asserts the source pattern so a
-    well-meaning simplification cannot move it. If you ever edit this file and `node
-    tests/vercel-entry.js` goes green while your Vercel project shows a "Framework Override" or an
-    auto-detected `public` directory, trust the test and fix the project settings.
+    1. There is no comment syntax in this file and NO extra keys are tolerated: the schema sets
+       `additionalProperties: false`, so an explanatory `_comment` key does not annotate the config, it
+       fails the build ("should NOT have additional property '_comment'"). Notes belong in this file and
+       in code comments. Validate a change before pushing it:
+
+           python3 - <<'PY'
+           import json,urllib.request
+           sc=json.load(urllib.request.urlopen('https://openapi.vercel.sh/vercel.json'))
+           cfg=json.load(open('vercel.json'))
+           print([k for k in cfg if k not in sc['properties']] or 'clean')
+           PY
+
+       (tests/vercel-entry.js does exactly this, fetched, and skips if you are offline.)
+
+    2. `beforeFiles` is NOT a vercel.json key. It belongs to next.config.js. An earlier revision of this
+       project asserted that its catch-all rewrite "runs before the filesystem" and leaned on that for
+       the paywall. It does not, it cannot, and Vercel says so in the docs for `rewrites`:
+
+           "The source property should NOT be a file because precedence is given to the filesystem
+            prior to rewrites being applied."
+
+       So a rewrite can never protect `task.html`: the file exists, the filesystem wins, the function is
+       skipped, the paid corpus is public. Not a leak you can spot from a status code, because
+       everything returns a healthy 200.
+
+    The rewrite is still here, and still a catch-all excluding only `_vercel/` — it is how /unlock,
+    /session and the asset requests reach the function at all. It is just not the security boundary.
+
+.vercelignore — this is the security boundary
+    The protected pages, `js/tasks.js`, `js/detector.js`, `gate.html`, and all of `data/`, `tools/`,
+    `tests/`, `supabase/` are EXCLUDED FROM THE DEPLOYMENT. The paywall on Vercel works because the paid
+    bytes are not on the server, which is a property of the filesystem rather than a race with routing
+    precedence. `nextHandler` then synthesises the 402 itself, from `deploy/gate-fallback.html`, because
+    `gate.html` is excluded too — a missing file must not turn a lock screen into a 404.
+
+    The cost of this design: a Vercel deployment cannot serve the paid pages at all, even to a keyholder.
+    That is deliberate, and it is the second reason payments live on the Supabase deployment. If you
+    want the graded workspace on Vercel, the answer is not a cleverer rewrite — it is serving those
+    bytes from the same private storage the Supabase function reads, which is a real feature, not a
+    config change.
+
+    Add a page to PROTECT? Add it here in the same commit. `tests/vercel-entry.js` fails if the two
+    lists drift, and a second phase of that test copies the repo minus .vercelignore into a temp
+    directory and re-runs every assertion against the copy — so "the file is absent in production" is
+    verified rather than assumed.
 
 api/index.js + api/_gate.js
     Vercel does not run Cloudflare Pages Functions (`export async function onRequest`). Rather than

@@ -20,6 +20,38 @@ const need = (c, name, note) => { if (c) { pass++; console.log('   \u2713 ' + na
 const handler = require(path.join(ROOT, 'api/index.js'));
 const server = http.createServer((req, res) => handler(req, res));
 
+/* A second server whose ROOT is a throwaway copy of the repo with .vercelignore applied — i.e. what
+   actually exists on Vercel's filesystem. Without this, every assertion below reads files from the
+   working tree and reports a paywall that is really only a routing preference, which is precisely the
+   thing Vercel documents it will NOT guarantee ("precedence is given to the filesystem prior to
+   rewrites being applied"). This is the phase that would have caught my own vercel.json design. */
+const fsx = require('fs');
+const os = require('os');
+function readIgnore() {
+  const f = path.join(ROOT, '.vercelignore');
+  if (!fsx.existsSync(f)) return [];
+  return fsx.readFileSync(f, 'utf8').split('\n').map((l) => l.trim())
+    .filter((l) => l && !l.startsWith('#'));
+}
+function buildDeployCopy() {
+  const dir = fsx.mkdtempSync(path.join(os.tmpdir(), 'vercel-deploy-'));
+  const ign = readIgnore();
+  const walk = (rel) => {
+    for (const e of fsx.readdirSync(path.join(ROOT, rel || '.'), { withFileTypes: true })) {
+      const r = (rel ? rel + '/' : '') + e.name;
+      if (ign.some((g) => g === r || (g.endsWith('/') && r.startsWith(g)) || r === g.replace(/\/$/, ''))) continue;
+      if (e.isDirectory()) { if (['node_modules', '.git', 'data'].indexOf(e.name) < 0 || rel !== '') { try { walk(r); } catch (_) { } } continue; }
+      if (!e.isFile()) continue;
+      if (ign.indexOf(r) >= 0) continue;
+      const dst = path.join(dir, r);
+      fsx.mkdirSync(path.dirname(dst), { recursive: true });
+      fsx.copyFileSync(path.join(ROOT, r), dst);
+    }
+  };
+  walk('');
+  return { dir, ign };
+}
+
 const get = (p, opts) => new Promise((resolve, reject) => {
   const req = http.request(Object.assign({ host: '127.0.0.1', port: server.address().port, path: p, method: 'GET', headers: {} }, opts || {}), (res) => {
     const chunks = [];
@@ -77,8 +109,40 @@ const get = (p, opts) => new Promise((resolve, reject) => {
 
   console.log('\n\u250c\u2500 the configuration that keeps this an actual paywall');
   const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'vercel.json'), 'utf8'));
+  need(!Object.keys(cfg).some((k) => k.startsWith('_')), 'vercel.json carries no comment keys',
+    'Vercel validates the file against a schema with additionalProperties:false, so a single "_comment" ' +
+    'key fails the whole build ("should NOT have additional property"). Notes live in deploy/VERCEL.md.');
+  {
+    // The check that would have saved 14 minutes and a failed production deploy: validate against
+    // Vercel's published schema, fetched, not remembered. Skips silently when offline.
+    let schema = null;
+    try {
+      schema = JSON.parse(await (await fetch('https://openapi.vercel.sh/vercel.json', { signal: AbortSignal.timeout(8000) })).text());
+    } catch (e) { }
+    if (!schema) {
+      console.log('   ~ schema fetch skipped (no network) — keys still checked against the local allowlist');
+      schema = { properties: { $schema: 1, framework: 1, functions: 1, rewrites: 1, buildCommand: 1, headers: 1, redirects: 1, outputDirectory: 1, cleanUrls: 1, crons: 1, env: 1, regions: 1 } };
+    }
+    const allowed = new Set(Object.keys(schema.properties || {}));
+    const offending = Object.keys(cfg).filter((k) => !allowed.has(k));
+    need(offending.length === 0, 'every vercel.json key exists in Vercel’s schema (' + allowed.size + ' allowed)', 'offending: ' + offending.join(', '));
+    const itemAllowed = new Set(Object.keys((((schema.properties || {}).rewrites || {}).items || {}).properties || { source: 1, destination: 1 }));
+    const badItems = (cfg.rewrites || []).flatMap((r) => Object.keys(r).filter((k) => !itemAllowed.has(k)));
+    need(badItems.length === 0, 'each rewrite entry uses only documented keys', badItems.join(', '));
+    const beforeFiles = JSON.stringify(cfg).indexOf('beforeFiles') >= 0;
+    need(!beforeFiles, 'no next.config.js key (beforeFiles) leaked into vercel.json, where it does not exist',
+      'it is not a vercel.json option and the schema rejects it');
+  }
   const src = (cfg.rewrites && cfg.rewrites[0] && cfg.rewrites[0].source) || '';
-  need(src === '/((?!api/|_vercel/).*)', 'the catch-all rewrite excludes only Vercel internals', src);
+  // Asserted as "is it a catch-all, and does it exclude ONLY Vercel internals", rather than pinned to an
+  // exact string. Excluding api/ here would be harmless but excluding anything else is not: this rewrite
+  // is what lets the function see /css and /assets requests at all. It is NOT what protects the paid
+  // files — Vercel's filesystem wins over rewrites, so that protection is .vercelignore, asserted below.
+  const isCatchAll = src.startsWith('/(') && src.includes('.*)') && src.endsWith(')');
+  need(isCatchAll && !src.includes('?!api') && !/\?\!(?!_vercel\/)/.test(src),
+    'the rewrite is a catch-all excluding only Vercel internals', src);
+  const cfgPath = '/((?!_vercel/).*)';
+  need(src === cfgPath, 'and its exact form is stable (a stray exclusion silently drops a whole prefix)', src);
   need(!('buildCommand' in cfg) && cfg.framework === null, 'no build step is configured (the repo root is the site)', JSON.stringify(Object.keys(cfg)));
   need(!cfg.outputDirectory && !cfg.public, 'no static output directory is declared \u2014 that is the gate-free deploy', JSON.stringify(cfg).slice(0, 80));
   const files = ['api/index.js', 'api/_gate.js', 'vercel.json'];
@@ -98,6 +162,35 @@ const get = (p, opts) => new Promise((resolve, reject) => {
     'the Vercel gate and server.js share one identical rule (no drift possible)', 'lists differ');
   need(/no way to verify|neither a Postgres backend|access denied/i.test(cf),
     'the underlying function still refuses to decide without a backend or a secret', 'fail-open wording changed');
+
+  const ign = readIgnore();
+  if (!ign.length) { need(false, '.vercelignore exists and lists the paid files', 'no .vercelignore'); }
+  const protectedPaths = ['task.html', 'queue.html', 'onboarding.html', 'detector.html', 'trust-safety.html',
+    'earnings.html', 'js/tasks.js', 'js/detector.js', 'data/', '.gitignore', 'tools/'];
+  const missingFromIgnore = protectedPaths.filter((p2) => ign.indexOf(p2) < 0);
+  need(missingFromIgnore.length === 0, 'every PROTECT path (and the owner tooling) is in .vercelignore',
+    'not excluded: ' + missingFromIgnore.join(', '));
+  need(ign.indexOf('deploy/gate-fallback.html') < 0 && ign.some((g) => g === 'gate.html'),
+    'gate.html is excluded while the fallback that replaces it is shipped', 'wrong halves');
+
+  console.log('\n\u250c\u2500 a simulated Vercel filesystem (repo minus .vercelignore)');
+  if (process.argv.indexOf('--deploy-copy') >= 0) { server.close(); return; }   // child: assertions only
+  const dir2 = buildDeployCopy();
+  const { dir } = dir2;
+  const child = require('child_process').spawn(process.execPath, [__filename, '--deploy-copy', dir],
+    { cwd: ROOT, env: Object.assign({}, process.env, { ANNOTATE_DEPLOY_ROOT: dir }), encoding: 'utf8', timeout: 90000 });
+  let cout = ''; child.stdout.on('data', (d) => { cout += d; });
+  const cerr = []; child.stderr.on('data', (d) => cerr.push(d));
+  const code = await new Promise((r) => child.on('exit', r));
+  const copied = require('child_process').execSync('find ' + JSON.stringify(dir) + ' -type f | wc -l').toString().trim();
+  console.log('   \u2713 deployment copy built: ' + copied + ' files, ' + ign.length + ' ignore patterns');
+  need(code === 0, 'the SAME handler, over the deployment copy, still passes every check (' +
+    (cout.match(/\u2713/g) || []).length + ' green)', cout.split('\n').filter((l) => /\u2717|failure/.test(l)).slice(0, 3).join(' | ').slice(0, 220) || cerr.join('').slice(0, 160));
+  need(!fsx.existsSync(path.join(dir, 'task.html')) && !fsx.existsSync(path.join(dir, 'js/tasks.js')),
+    'the paid corpus is genuinely ABSENT from the deployment (this is the gate, not a rewrite)', 'still present');
+  need(fsx.existsSync(path.join(dir, 'deploy/gate-fallback.html')),
+    'the 402 body ships in deploy/, so it survives the exclusion of gate.html', 'fallback missing');
+  fsx.rmSync(dir, { recursive: true, force: true });
 
   server.close();
   console.log('\n' + '='.repeat(56));

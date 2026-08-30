@@ -18,7 +18,12 @@
 const fs = require('fs');
 const path = require('path');
 
-const ROOT = path.join(__dirname, '..');            // the repo root == the Vercel deployment root
+// The repo root IS the deployment root on Vercel (no build step, no outputDirectory) — except that
+// whatever .vercelignore excludes is genuinely absent in production. tests/vercel-entry.js therefore
+// runs this module a second time against a throwaway copy with those patterns applied, so "the paid
+// file is not on the server" is verified rather than assumed. ANNOTATE_DEPLOY_ROOT is how it points
+// there; nothing about the production path changes.
+const ROOT = process.env.ANNOTATE_DEPLOY_ROOT || path.join(__dirname, '..');
 const FN = path.join(ROOT, 'deploy/cloudflare-pages-function.js');
 
 /** Evaluate the gate module and return its onRequest. */
@@ -56,6 +61,14 @@ const TYPES = {
 const PUBLIC_ASSET = /^\/(?:css|js|assets)\/[^/]+$/;
 const PROTECTED = /^\/(?:task|queue|onboarding|detector|trust-safety|earnings)\.html$|^\/js\/(?:tasks|detector)\.js$|^\/data\//;
 
+// The paid corpus, served as an empty stub instead of the real file — the same choice the Supabase and
+// Cloudflare variants make. Kept inline because the real file is NOT DEPLOYED (see .vercelignore), so
+// there is nothing on disk to withhold here.
+const STUB_JS = {
+  '/js/tasks.js': 'window.Tasks={list:function(){return[]},get:function(){return null},count:0};window.POLICY={};',
+  '/js/detector.js': 'window.Detector={analyze:function(){return{index:null,locked:true,features:[],tips:[]}}};'
+};
+
 /** The `next()` a Pages function expects: serve from disk, or 404 — never hand back an ungated page. */
 async function nextHandler(request) {
   const p = originalPath(request);
@@ -64,6 +77,26 @@ async function nextHandler(request) {
   if (abs !== ROOT && abs.indexOf(ROOT + path.sep) !== 0) return { status: 400, body: Buffer.from('bad path'), type: 'text/plain; charset=utf-8' };
   const cands = fs.existsSync(abs) ? [abs] : (/\.[a-z0-9]+$/i.test(abs) ? [] : [abs + '.html']);
   const file = cands.find((f) => fs.existsSync(f) && fs.statSync(f).isFile());
+  if (!file && PROTECTED.test(rel)) {
+    // THIS is the actual paywall on Vercel, and it is deliberately not a rewrite.
+    //
+    // Vercel's own docs: "The source property should NOT be a file because precedence is given to the
+    // filesystem prior to rewrites being applied." A catch-all rewrite therefore CANNOT gate
+    // /task.html — the file exists, so Vercel serves it and onRequest never runs. The earlier shape of
+    // this adapter relied on that rewrite, and vercel.json even documented beforeFiles as the fix;
+    // beforeFiles is a next.config.js key, not a vercel.json one, so the comment was describing an
+    // option that does not exist and the design was leaning on a guarantee Vercel explicitly refuses to
+    // make. What actually holds: the paid bytes are excluded from the deployment by .vercelignore, so
+    // there is nothing for the filesystem to prefer, and the 402 body is synthesised here from
+    // deploy/gate-fallback.html. A paywall that works because a file is absent cannot be bypassed by
+    // routing precedence.
+    if (/\.js$/.test(rel)) {
+      return { status: 402, body: Buffer.from(STUB_JS[rel] || 'window.__locked=true;'), type: TYPES['.js'], cache: 'no-store' };
+    }
+    const g = path.join(ROOT, 'deploy/gate-fallback.html');
+    const body = fs.existsSync(g) ? fs.readFileSync(g) : Buffer.from('<!DOCTYPE html><title>Locked</title><p>Paid access required.</p>');
+    return { status: 402, body, type: TYPES['.html'], cache: 'no-store' };
+  }
   if (!file) {
     const nf = path.join(ROOT, '404.html');
     return { status: 404, body: fs.existsSync(nf) ? fs.readFileSync(nf) : Buffer.from('not found'), type: TYPES['.html'] };
@@ -93,8 +126,14 @@ function makeFetch(baseOrigin) {
     try { u = new URL(req.url); } catch (e) { u = null; }
     const sameSite = u && (u.origin === baseOrigin || u.hostname === '127.0.0.1' || u.hostname === 'localhost');
     if (sameSite) {
-      const r = await nextHandler({ url: u.pathname, headers: { 'x-invoke-path': u.pathname } });
-      return new Response(r.body, { status: r.status, headers: { 'content-type': r.type, 'cache-control': r.cache || 'no-store' } });
+        const r = await nextHandler({ url: u.pathname, headers: { 'x-invoke-path': u.pathname } });
+      // gate.html is itself excluded from the deployment (.vercelignore), because the lock screen is
+      // exactly what a crawler should NOT index as a free page. So a missing one is expected, not an
+      // error: fall back to the shipped copy instead of handing the caller a 404 body to wrap in a 402.
+      const out = (u.pathname === '/gate.html' && r.status === 404)
+        ? { status: 200, body: fs.readFileSync(path.join(ROOT, 'deploy/gate-fallback.html')), type: TYPES['.html'] }
+        : r;
+      return new Response(out.body, { status: out.status, headers: { 'content-type': out.type, 'cache-control': out.cache || 'no-store' } });
     }
     return fetch(req);
   };

@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Locked · AnnotateTrainer</title>
+<style>
+:root{color-scheme:dark}
+body{background:#0b0d12;color:#e7ecf3;font:15px/1.6 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+display:grid;place-items:center;min-height:100vh;margin:0;padding:24px;box-sizing:border-box}
+.card{max-width:520px;background:#141922;border:1px solid #232b39;border-radius:14px;padding:28px}
+.up{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#6d7c92;font-weight:700}
+h1{font-size:21px;margin:8px 0}
+p{color:#93a0b4;font-size:13.5px}
+input{width:100%;box-sizing:border-box;background:#0e131c;border:1px solid #2e3848;color:#e7ecf3;border-radius:9px;padding:11px 13px;font-family:ui-monospace,monospace;font-size:13px}
+button{background:#6a5bf0;border:1px solid #7f70ff;color:#fff;border-radius:9px;padding:11px 17px;font-weight:700;cursor:pointer}
+.row{display:flex;gap:8px;margin-top:12px}
+a{color:#8b7cff}
+#m{font-size:12px;min-height:18px;color:#6d7c92}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="up">Locked</div>
+  <h1>This practice platform is paid-access</h1>
+  <p>Paste the key from your receipt. The platform catalogue and the guide stay free.</p>
+  <div class="row"><input id="k" placeholder="Ab3xK9.7W7KqRmYs0dYbE6fLrT1cPp0.1790000000000"><button id="go">Unlock</button></div>
+  <p id="m"></p>
+  <p><a href="/buy.html">Pricing</a> · pay by transfer or one-time Litecoin</p>
+</div>
+<script>
+var go=function(){var k=document.getElementById('k').value.trim();var m=document.getElementById('m');
+m.textContent='checking\u2026';
+fetch('/unlock',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({key:k})})
+.then(function(r){return r.json().then(function(j){return{c:r.status,j:j}})})
+.then(function(r){m.style.color=r.c===200?'#57d38b':'#ff6b6b';
+m.textContent=r.c===200?('Accepted - '+(r.j.label||'')+', valid until '+(r.j.until||'')):(r.j.error||'Key rejected.');
+if(r.c===200)setTimeout(function(){location.reload()},700);});};
+document.getElementById('go').onclick=go;
+document.getElementById('k').addEventListener('keydown',function(e){if(e.key==='Enter')go();});
+</script>
+</body>
+</html>

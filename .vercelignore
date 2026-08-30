@@ -1,0 +1,34 @@
+# Everything below is EXCLUDED FROM THE DEPLOYMENT, not merely blocked by a route.
+#
+# This matters more than it looks. Vercel applies the filesystem BEFORE rewrites, so a rewrite cannot
+# gate a file that exists (their docs say so explicitly). The only version of this that is not a race
+# with routing precedence is: the paid bytes are never uploaded, so there is nothing to prefer.
+#
+# If you add a protected page to PROTECT in server.js / the edge functions, add it here too.
+# tests/vercel-entry.js fails if the two lists drift.
+
+# the graded corpus and the paid workspace
+task.html
+queue.html
+onboarding.html
+detector.html
+trust-safety.html
+earnings.html
+js/tasks.js
+js/detector.js
+
+# the lock screen itself: it is the one page a crawler must not index as free content, and the gate
+# serves deploy/gate-fallback.html in its place, so it costs nothing to leave it out
+gate.html
+
+# owner-side material that has no business on a public host
+data/
+tools/
+tests/
+supabase/
+.gitignore
+.vercelignore
+README.md
+ACCESS.md
+DEPLOY.md
+QUICKSTART.md

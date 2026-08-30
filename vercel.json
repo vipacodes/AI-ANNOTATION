@@ -1,26 +1,10 @@
 {
-  "_comment": [
-    "The two keys that matter here are rewrites[].source and the absence of any build step.",
-    "",
-    "beforeFiles, NOT rewrites: in Vercel a top-level `rewrites` entry is evaluated AFTER filesystem",
-    "routes, so /task.html would be served straight from the deployment and the paywall would never",
-    "run — a working site, an open one. `beforeFiles` is evaluated first, which is the only ordering",
-    "consistent with the invariant this project is built on (protected bytes never reach a browser",
-    "without a key). /api/* and /_vercel/* stay excluded so the function's own endpoints and Vercel's",
-    "internal routes still resolve.",
-    "",
-    "No buildCommand and no framework: the repo root is the site. There is deliberately no `public`",
-    "outputDirectory either — Vercel's zero-config static deploy is exactly what produces a",
-    "gate-free copy of everything under /js and /data."
-  ],
+  "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
   "functions": {
     "api/index.js": { "memory": 1024, "maxDuration": 30 }
   },
   "rewrites": [
-    {
-      "source": "/((?!api/|_vercel/).*)",
-      "destination": "/api/index"
-    }
+    { "source": "/((?!_vercel/).*)", "destination": "/api/index" }
   ]
 }
