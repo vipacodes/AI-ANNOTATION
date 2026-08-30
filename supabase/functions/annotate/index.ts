@@ -42,7 +42,7 @@ const ANON_KEY = env('ANON_KEY') || env('SUPABASE_ANON_KEY') || env('PUBLISHABLE
 // into a curl. It earned its place: Supabase accepted two deploys in a row while the worker kept
 // serving the previous build, so a route I had just added looked like it was missing from the code.
 // Every "that cannot happen" debugging loop in this file started with a stale build marker.
-const BUILD = 'annotate-2026-08-30.11';
+const BUILD = 'annotate-2026-08-30.14';
 
 const KEY_RE = /^([A-Za-z0-9]{6,10})\.([A-Za-z0-9_\-]{20,})\.(\d{10,13})$/;
 const KEY_COOKIE = 'at_key';
@@ -231,6 +231,40 @@ async function fulfil(ref: string, planKey: string) {
   }).catch(() => { });
   // the key is also the receipt: return it to the browser and let the webhook caller relay it.
   return { ok: true, key: mint.json.key, until: mint.json.until, label, email: paid.email };
+}
+
+/* The URL that renders. Declared BEFORE the notice that reads it — the first cut sat next to `const
+   notice, and `const` does not hoist: the browser-only path threw "RENDER_URL is not defined" and
+   Supabase answered 500, which is also why the notice never appeared on free pages. Overridable,
+   because it belongs to whoever deploys this. (A duplicate `const BUCKET` I briefly added next to it was
+   a redeclaration error and the Deno suite rejected the file — that suite is the reason this shipped
+   fixed rather than live-broken.) */
+const RENDER_URL = String(globalThis.env?.RENDER_URL || 'https://ai-annotation-tau.vercel.app').replace(/\/+$/, '');
+
+/* Supabase rewrites every text/html GET from a project domain into text/plain + nosniff (their docs:
+   /guides/functions/limits; Storage does the same to .html objects). So a browser opening this URL reads
+   markup instead of the site, and there is nothing the function can do about the label. What it CAN do is
+   say so, in the document, once, for a real navigation. Keyed on Accept + User-Agent so it never attaches
+   to a programmatic pull — including the Vercel mirror's, which re-types the bytes itself. */
+const NOTE = '<div id="sb-note" style="all:initial;box-sizing:border-box;display:block;background:#1a1428;' +
+  'border:1px solid #4b3f8f;color:#e9e4ff;font:13px/1.5 ui-sans-serif,system-ui,sans-serif;padding:12px 16px;' +
+  'margin:0">This URL is a Supabase function, and Supabase serves HTML to browsers as <b>plain text</b> ' +
+  'unless you pay for a custom domain — so this page shows its own markup. The same site, rendered and ' +
+  'gated, with the same keys: <a href="$HERE" style="color:#b6a8ff;text-decoration:underline">$WHERE</a>.</div>';
+function annotateNotice(doc, where) {
+  // NOT encodeURIComponent: applied to a whole URL it percent-encodes the scheme too
+  // ("https%3A%2F%2Fhost%2Ftask.html"), which renders a link that goes nowhere. The path reaching here
+  // has already been through the route matcher and is one of the site's own .html names, so there is no
+  // quote or angle bracket to escape; the guard below is belt-and-braces for anything that calls it later.
+  const safe = String(where || '/').replace(/["'<>]/g, '');
+  const note = NOTE.replace(/\$HERE/g, safe).replace(/\$WHERE/g, safe);
+  // '<head>…</head>' with a [^>]* capture: the greedy .*</head> version of this matched the CLOSING tag
+  // too, so "$1" swallowed the '>' that ended <head> and the first meta tag came out unclosed.
+  const m = /<head[^>]*>/i.exec(doc);
+  if (m) return doc.slice(0, m.index + m[0].length) + note + doc.slice(m.index + m[0].length);
+  const b = /<body[^>]*>/i.exec(doc);
+  if (b) return doc.slice(0, b.index) + note + doc.slice(b.index);
+  return note + doc;
 }
 
 /* The lock screen is gate.html, and gate.html carries a render sentinel — which means the bucket copy
@@ -763,7 +797,13 @@ Deno.serve(async (req) => {
         const screen = GATE_HTML.indexOf('/*@@GATE_PATH@@*/') >= 0
           ? GATE_HTML.replace("/*@@GATE_PATH@@*/''", JSON.stringify(ret))
           : GATE_HTML.replace(/var __GATE_TARGET=[^;]*;/, 'var __GATE_TARGET=' + JSON.stringify(ret) + ';');
-        return new Response(screen, { status: 402, headers: { 'content-type': TYPES['.html'], 'cache-control': 'no-store' } });
+        // The lock screen is the FIRST thing a browser sees at this URL, and it is built here rather than
+        // served from the bucket, so it needs the notice on its own path or a visitor reads raw tags and
+        // no explanation anywhere.
+        const lockDoc = /text\/html/.test(req.headers.get('accept') || '') &&
+          /mozilla|chrome|safari|firefox|edg\//i.test(req.headers.get('user-agent') || '')
+          ? annotateNotice(screen, RENDER_URL + p) : screen;
+        return new Response(lockDoc, { status: 402, headers: { 'content-type': TYPES['.html'], 'cache-control': 'no-store' } });
       }
       return new Response('locked', { status: 402, headers: { 'content-type': 'text/plain' } });
     }
@@ -806,24 +846,15 @@ Deno.serve(async (req) => {
   const isBrowserNav = /text\/html/.test(req.headers.get('accept') || '') &&
     /mozilla|chrome|safari|firefox|edg\//i.test(req.headers.get('user-agent') || '');
   let served: BodyInit = up.body;
-  if (isBrowserNav && /\.html$/i.test(p)) {
-    const doc = await up.text();
-    served = doc.replace(/<head>([^]*?)>/i, '<head>$1' +
-      '<style>#sb-note{all:initial;box-sizing:border-box;display:block;background:#1a1428;border:1px solid #4b3f8f;' +
-      'color:#e9e4ff;font:13px/1.5 ui-sans-serif,system-ui,sans-serif;padding:12px 16px;margin:0}' +
-      '#sb-note a{color:#b6a8ff;text-decoration:underline}</style>' +
-      '</head><body style="margin:0"><div id="sb-note">This URL is a Supabase function, and Supabase serves ' +
-      'HTML to browsers as <b>plain text</b> unless you pay for a custom domain — so the page below shows its ' + 'own markup. The same site, rendered and gated: <a href="https://ai-annotation-tau.vercel.app/' +
-      p.replace(/^\//, '') + '">ai-annotation-tau.vercel.app</a>. Keys, payments and your data work from either.</div>')
-      .replace(/^/, '');
-  }
+  if (isBrowserNav) served = annotateNotice(await up.text(), RENDER_URL + p);
   if (p === '/gate.html') {
     // The lock screen is the one page that must be RENDERED rather than streamed: its sentinel holds
     // the path the visitor should land on after a successful unlock, and handing out the bucket copy
     // verbatim shows them the token instead. Read the body here — this path is no-store and low volume,
     // and a streamed response cannot be patched without buffering it anyway.
     const q = new URL(req.url).searchParams.get('next') || '';
-    const t = await up.text();
+    // served may already hold the notice-bearing text; only read the body if nobody has consumed it.
+    const t = typeof served === 'string' ? served : await up.text();
     served = renderGate(t, /^\/[\w.\/-]+$/.test(q) ? q : '');
   }
   return new Response(served, {
