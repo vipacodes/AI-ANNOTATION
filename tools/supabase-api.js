@@ -19,9 +19,20 @@ const SERVICE = process.env.SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY
 const ANON = process.env.ANON_KEY || process.env.SUPABASE_ANON_KEY || '';
 const PROJECT_URL = process.env.PROJECT_URL || ('https://' + REF + '.supabase.co');
 
-function request(opts, body) {
+function request(opts, body, raw) {
   return new Promise((resolve, reject) => {
     const req = https.request(opts, (res) => {
+      if (raw) {
+        // Binary fidelity: a PNG read back as a utf8 string is NOT the file, and comparing that to a
+        // hash of the file would report a corrupt upload as correct. Collect the chunks instead.
+        const chunks = [];
+        res.on('data', (d) => chunks.push(d));
+        res.on('end', () => {
+          const buffer = Buffer.concat(chunks);
+          resolve({ status: res.statusCode, buffer, body: buffer.toString('utf8'), headers: res.headers });
+        });
+        return;
+      }
       let s = '';
       res.setEncoding('utf8');
       res.on('data', (d) => s += d);
@@ -80,7 +91,7 @@ async function project(path, opts) {
   const r = await request({
     hostname: new URL(PROJECT_URL).hostname, port: 443, method: o.method, path,
     headers: Object.assign({}, headers, body ? { 'content-length': Buffer.byteLength(body) } : {})
-  }, body);
+  }, body, !!o.raw);
   return r;
 }
 

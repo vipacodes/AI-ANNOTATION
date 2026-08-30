@@ -278,6 +278,30 @@ curl -sI $FUNCTION_URL/task.html | head -1     # 402 = the lock works
 `SUPABASE_URL=… SERVICE_ROLE_KEY=… node server.js` (`/api/health` will say
 `backend: supabase-postgres`). Set `ACCESS_MODE=local` to force the offline HMAC path.
 
+## After changing any page: `node tools/upload-site.js`, and trust only a byte check
+
+The site lives in a private bucket, so `git push` changes nothing a buyer can see. Uploading is the
+deploy, and it now verifies itself in the strictest way available: it reads every object back from
+storage and compares **hashes**, retrying briefly because an object replaced under its own key can
+serve the previous copy for a few hundred milliseconds.
+
+That read-back exists because of a bug that survived every check I had: the uploader sent
+`buf.toString('binary')`, which turns each UTF-8 byte into a *character*, and the HTTP layer then
+re-encoded those characters as UTF-8. Every em-dash, middot and arrow on the live pages became
+`â`-style mojibake. Status codes were all 200, every local test passed (the local server reads
+from disk), and the size-only `--check` I had been calling a verification couldn't see it either.
+`tools/verify-crypto-ui.js`, which renders the served page, is the thing that finally caught it.
+
+Two rules fall out of that, both encoded in the tool now:
+- **Never send a decoded string where a file's bytes belong.** Pass the Buffer.
+- **A deploy check must compare content, not shape.** Length, count and status code all lie; a hash
+  does not. `--check` therefore re-fetches and hashes all 32 files rather than asking "did it answer?".
+
+Also note what is *not* uploaded, deliberately: `server.js` and `package.json` are the local dev
+server, `tools/` and `tests/` never reach the bucket, and `robots.txt` / `sitemap.xml` /
+`favicon.ico` now are (they used to be skipped silently, so crawlers got a 404 for robots.txt while
+the upload reported success — `collect()` only walked `.html` files plus three directories).
+
 ## Making the paywall actually hold
 
 Ranked by how much they're worth. Do 1–3.
