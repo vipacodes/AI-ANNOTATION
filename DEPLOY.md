@@ -22,10 +22,22 @@ sent to someone without a key, and you pay nothing until you have real traffic.
    `functions/[[path]].js` in the repo. Framework preset: *None*. Build command: empty.
    Output directory: `/`. Build passes a `node --check`-clean tree; no install step needed.
 
-3. **Set the secret.** Dashboard → your Pages project → Settings → Environment variables →
-   add `ANNOTATE_SECRET` = the value from `node tools/keygen.js secret`. In Cloudflare's
-   Workers runtime `process.env` is not populated, so read it from the bound `env` object —
-   the function already does `globalThis.env`. Set it in **Production and Preview**.
+3. **Set the two public variables** (Dashboard → your Pages project → Settings → Environment
+   variables → Production *and* Preview):
+
+   | Variable | Value | Secret? |
+   |---|---|---|
+   | `SUPABASE_URL` | `https://veecksfcnlpppzvplcyt.supabase.co` | no (already the default in the file) |
+   | `SUPABASE_ANON_KEY` | your publishable key | no — public by design |
+
+   The function now asks Postgres `key_check()` instead of holding a signing secret, so **there is
+   nothing sensitive on Cloudflare to leak**: revocation and expiry live in the database and apply
+   to every deployment instantly. If the database is unreachable the function **denies** (with a
+   2.5 s timeout) — a gate that opens on error is not a gate.
+   Keep `ANNOTATE_SECRET` instead (and set `ACCESS_MODE=hmac`) only if you skip Supabase entirely.
+   `node tests/edge-function.js` imports the real function against a stubbed PostgREST and checks
+   exactly this: 402 for protected HTML, a 94-byte stub for the corpus, valid key → 200, and
+   "database down → locked". Set it in **Production and Preview**.
 
 4. **Custom domain.** Pages → Custom domains → add e.g. `practice.yourdomain.com`. Free TLS.
    If you don't own a domain yet: Whogohost/Qservers/Namecheap, `.ng` or `.com`, ~₦4–9k/yr.
@@ -34,8 +46,12 @@ sent to someone without a key, and you pay nothing until you have real traffic.
    ```bash
    curl -sI https://practice.example.com/task.html          # expect 402
    curl -sI https://practice.example.com/index.html         # expect 200
-   curl -sI -H "x-access-key: $(node tools/keygen.js new --days 1 | sed -n 3p)" https://practice.example.com/task.html   # expect 200
+   curl -sI -H "x-access-key: $(node tools/keygen.js new --days 1 | sed -n 2p)" https://practice.example.com/task.html   # expect 200
+   curl -s -X POST -H 'content-type: application/json' -d '{"key":"<that key>"}' https://practice.example.com/unlock -i | head -1  # expect 200 + Set-Cookie
    ```
+   With `SUPABASE_ANON_KEY` set, that key must exist as a row in `public.access_keys` — mint it
+   with `node tools/keygen.js new --label X --days 30 --sql` and paste the printed INSERT, or call
+   the `key_mint` RPC.
    If `task.html` returns 200 without a key, **stop** — the secret mismatched or the function
    isn't deployed. Do not sell a lock you haven't watched refuse a request.
 

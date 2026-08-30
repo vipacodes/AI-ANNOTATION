@@ -82,7 +82,12 @@ labels, a brute-force counter and payment-webhook minting then live in the datab
 supabase/migrations/0001_paywall.sql      # key_check / key_mint / key_attempt RPCs + trigger
 supabase/functions/annotate/index.ts      # serves the site from a private bucket, gates by key
 supabase/SETUP.md                         # paste-ready dashboard steps
+ACCESS.md                                 # the minimum tokens to hand an agent, and how to revoke them
 ```
+
+`deploy/cloudflare-pages-function.js` can use that same database, in which case Cloudflare
+stores **no secret at all** and `node --experimental-vm-modules tests/edge-function.js` proves the
+lock (23 checks) by importing the real function against a stubbed PostgREST.
 
 ## Run the checks
 
@@ -105,7 +110,7 @@ forged signature refused, an expired key refused, and revocation taking effect o
 request. Client-side, it loads `queue.html` with a key in storage and asserts the content only
 appears for a server-verified session.
 
-Last run: **258 assertions, 0 failures** (`node tests/verify.js`) — 8 task types, 13 pages,
+Last run: **262 assertions, 0 failures** (`node tests/verify.js`) — 8 task types, 13 pages,
 the paywall (live server boot), and the boundary checks.
 
 ## Structure

@@ -18,7 +18,8 @@ Mint one any time with
 
 Run the checks whenever you touch anything:
 ```bash
-node tests/verify.js        # 244 assertions incl. a live boot of server.js + the gate
+node tests/verify.js                 # 262 assertions, incl. a live boot of server.js + the gate
+node --experimental-vm-modules tests/edge-function.js   # the Cloudflare function, for real
 ```
 
 ---
@@ -50,7 +51,8 @@ git init && git add -A && git commit -m "AnnotateTrainer"
 gh repo create annotate-trainer --public --source=. --push        # or push on github.com manually
 # Cloudflare dashboard → Workers & Pages → Create → Pages → connect the repo
 #   Framework preset: None · Build command: (empty) · Output dir: /
-#   Settings → Environment variables → ANNOTATE_SECRET = `node tools/keygen.js secret`
+#   Settings → Environment variables → SUPABASE_ANON_KEY = <publishable key>   (that is all)
+#   Or skip Cloudflare entirely: supabase/SETUP.md serves the site from an Edge Function.
 # Then point a domain at it: practice.yourdomain.com  (or free practice.<project>.pages.dev)
 ```
 

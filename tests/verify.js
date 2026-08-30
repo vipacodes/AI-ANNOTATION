@@ -481,6 +481,8 @@ async function readyKeyed(url, key) {
   {
     const md = fs.readFileSync(path.join(ROOT, 'DEPLOY.md'), 'utf8');
     need(md.length > 3000, 'DEPLOY.md written (' + Math.round(md.length / 1000) + ' KB)', 'too short');
+    need(/no secret|nothing sensitive|denies|fail/i.test(md) && /SUPABASE_ANON_KEY/.test(md),
+      'DEPLOY.md documents the no-secret-on-Cloudflare + fail-closed design', 'deploy doc stale');
     need(/cloudflare/i.test(md), 'covers Cloudflare Pages + function', 'no edge option');
     need(/ANNOTATE_SECRET/.test(md), 'names the secret env var', 'no env var');
     need(/paystack|flutterwave/i.test(md), 'Nigerian payment rails covered', 'no local processor');
@@ -490,7 +492,7 @@ async function readyKeyed(url, key) {
     need(/robots\.txt/.test(md), 'tells you to keep gated pages out of search indexes', 'no robots note');
     need(/impersonation|logos/i.test(md), 'brand/legal note included', 'no legal note');
     const fn = fs.readFileSync(path.join(ROOT, 'deploy/cloudflare-pages-function.js'), 'utf8');
-    need(/throw new Error\('ANNOTATE_SECRET is not set/.test(fn), 'edge function refuses to serve if the secret is missing (no open door)', 'fails open');
+    need(/neither a Postgres backend nor ANNOTATE_SECRET/.test(fn), 'edge function refuses everything if it has no way to verify a key', 'fails open');
     need(/402/.test(fn) && /PUBLIC/.test(fn), 'edge function implements the same 402 rule', 'function incomplete');
     need(!/require\(/.test(fn.replace(/^\/\*[\s\S]*?\*\/|^\s*\/\/.*$/gm, '')), 'edge function is worker-safe (no node requires)', 'uses node builtins');
     /* the classic paywall bug: a PUBLIC pattern that matches every path */
@@ -537,6 +539,13 @@ async function readyKeyed(url, key) {
     const dir = 'supabase';
     need(fs.existsSync(path.join(ROOT, dir, 'migrations/0001_paywall.sql')) && fs.existsSync(path.join(ROOT, dir, 'functions/annotate/index.ts')),
       'supabase/ ships a migration and an edge function', 'supabase files missing');
+    const acc = fs.readFileSync(path.join(ROOT, 'ACCESS.md'), 'utf8');
+    need(/revoke/i.test(acc) && /never ask for/i.test(acc) && !/[A-Za-z0-9_\-]{38,}/.test(acc),
+      'ACCESS.md teaches scoped-and-revoke and contains no real credential', 'access doc unsafe or missing');
+    const pg = fs.readFileSync(path.join(ROOT, 'deploy/cloudflare-pages-function.js'), 'utf8');
+    need(/rpc\/key_check|'key_check'/.test(pg), 'Pages function asks Postgres to decide (no secret stored on Cloudflare)', 'not DB-backed');
+    need(/Key database unreachable[^']*(denied|Deny)/i.test(pg) && /AbortSignal\.timeout/.test(pg),
+      'a dead database fails closed, with a timeout, rather than opening the door', 'fails open');
     const sql = fs.readFileSync(path.join(ROOT, 'supabase/migrations/0001_paywall.sql'), 'utf8');
     need(/function public\.key_check/.test(sql) && /function public\.key_mint/.test(sql) && /function public\.key_attempt/.test(sql),
       'three RPCs defined: key_check / key_mint / key_attempt', 'functions missing');
@@ -562,6 +571,17 @@ async function readyKeyed(url, key) {
     const srv = srvSrc;
     need(/ACCESS_MODE !== 'local'/.test(srv) && /SUPABASE_URL/.test(srv),
       'server.js supports the Postgres verifier and can be forced offline for tests', 'no verifier switch');
+  }
+
+  console.log('\n\u250c\u2500 deploy/cloudflare-pages-function.js (imported for real)');
+  {
+    const { spawnSync } = require('child_process');
+    const t = spawnSync(process.execPath, ['--experimental-vm-modules', path.join(ROOT, 'tests/edge-function.js')],
+      { cwd: ROOT, encoding: 'utf8', timeout: 120000 });
+    const out = (t.stdout || '') + (t.stderr || '');
+    const passed = (out.match(/\u2713/g) || []).length;
+    need(t.status === 0, 'edge function harness: ' + passed + ' checks green (real module, stubbed PostgREST, fail-closed verified)',
+      out.split('\n').filter((l) => /\u2717|Error/.test(l)).slice(0, 3).join(' | ') || 'exit ' + t.status);
   }
 
   console.log('\n\u250c\u2500 boundaries: what this site refuses to be');
