@@ -42,7 +42,7 @@ const ANON_KEY = env('ANON_KEY') || env('SUPABASE_ANON_KEY') || env('PUBLISHABLE
 // into a curl. It earned its place: Supabase accepted two deploys in a row while the worker kept
 // serving the previous build, so a route I had just added looked like it was missing from the code.
 // Every "that cannot happen" debugging loop in this file started with a stale build marker.
-const BUILD = 'annotate-2026-08-30.9';
+const BUILD = 'annotate-2026-08-30.10';
 
 const KEY_RE = /^([A-Za-z0-9]{6,10})\.([A-Za-z0-9_\-]{20,})\.(\d{10,13})$/;
 const KEY_COOKIE = 'at_key';
@@ -231,6 +231,17 @@ async function fulfil(ref: string, planKey: string) {
   }).catch(() => { });
   // the key is also the receipt: return it to the browser and let the webhook caller relay it.
   return { ok: true, key: mint.json.key, until: mint.json.until, label, email: paid.email };
+}
+
+/* The lock screen is gate.html, and gate.html carries a render sentinel — which means the bucket copy
+   must never be handed out raw, or a visitor reads the token instead of their return path. Render on the
+   way out, at the one place bucket bytes become a response, so "did I remember to stamp this route" is
+   not a question. */
+function renderGate(text, next) {
+  const lit = JSON.stringify(next || '');
+  return text.indexOf('/*@@GATE_PATH@@*/') >= 0
+    ? text.replace("/*@@GATE_PATH@@*/''", lit)
+    : text.replace(/var __GATE_TARGET = [^;]*;/, 'var __GATE_TARGET = ' + lit + ';');
 }
 
 /* ---- serving from the private bucket ---- */
@@ -786,7 +797,17 @@ Deno.serve(async (req) => {
   const cache = (!isProtected(p) && /^\/(?:css|js|assets)\//.test(p))
     ? 'public, max-age=300, stale-while-revalidate=60'
     : 'no-store';
-  return new Response(up.body, {
+  let served: BodyInit = up.body;
+  if (p === '/gate.html') {
+    // The lock screen is the one page that must be RENDERED rather than streamed: its sentinel holds
+    // the path the visitor should land on after a successful unlock, and handing out the bucket copy
+    // verbatim shows them the token instead. Read the body here — this path is no-store and low volume,
+    // and a streamed response cannot be patched without buffering it anyway.
+    const q = new URL(req.url).searchParams.get('next') || '';
+    const t = await up.text();
+    served = renderGate(t, /^\/[\w.\/-]+$/.test(q) ? q : '');
+  }
+  return new Response(served, {
     status: 200,
     headers: {
       'content-type': TYPES[p.slice(p.lastIndexOf('.'))] || 'application/octet-stream',

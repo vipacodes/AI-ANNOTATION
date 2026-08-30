@@ -87,6 +87,13 @@ const get = (p, opts) => new Promise((resolve, reject) => {
     // to simulate a bundle would have been the second-worst way to find this bug. (The first attempt
     // did exactly that, and `git checkout` put the file back.)
     const BUNDLE = ROOT;
+    // Guard, learned the hard way: run this mode standalone and ROOT is the real repository, so the
+    // deletes below remove the site's own gate.html / 404.html / gate-fallback.html. That happened twice
+    // and each time the suite still looked healthy until the next command failed on a missing file.
+    if (BUNDLE === path.join(__dirname, '..')) {
+      console.log('\u2717 --no-fallback must be driven by the parent (it hands a scratch tree); refusing to delete in ' + BUNDLE);
+      process.exit(1);
+    }
     const gone = [];
     for (const f of ['deploy/gate-fallback.html', '404.html', 'gate.html']) {
       const abs = path.join(BUNDLE, f);
@@ -94,10 +101,16 @@ const get = (p, opts) => new Promise((resolve, reject) => {
     }
     need(gone.length >= 2, 'fixture: the fallback files really are absent from this copy', gone.join(','));
     let x = await get('/task.html');
-    need(x.status === 402 && /placeholder=/i.test(x.body) && /Unlock/i.test(x.body) && /<form|<button/i.test(x.body),
-      'PROTECTED page still renders the full lock screen with no deploy/gate-fallback.html on disk',
-      x.status + ' ' + x.body.slice(0, 90));
+    const l0 = (x.body.match(/var __GATE_TARGET[^\n]{0,34}/) || ['none'])[0];
+    need(x.status === 402 && /Unlock/i.test(x.body) && /id="k"/.test(x.body) && x.body.length > 3000,
+      'PROTECTED page still renders the FULL lock screen with no gate.html, no fallback, no 404.html',
+      x.status + ' ' + x.body.length + 'B ' + x.body.slice(0, 60).replace(/\n/g, ' '));
     need(x.status === 402 && !/ENOENT/.test(x.body), 'no ENOENT leak from the missing file', x.body.slice(0, 90));
+    // The failure this line exists for: dropping the fetch shim's gate.html branch made a missing
+    // gate.html resolve to the 404 page, and the module cheerfully wrapped THAT in a 402 — right
+    // status, wrong document, and no test noticed until it asserted the body.
+    need(x.status === 402 && !/Not found/i.test(x.body), 'a 402 never carries the 404 page', x.body.slice(0, 80).replace(/\n/g, ' '));
+    need(x.status === 402 && l0.indexOf('"/task.html"') >= 0, 'and the screen it carries is stamped with the refused path', l0);
     x = await get('/nothing-at-all-here');
     need(x.status === 404 && /<!DOCTYPE html>/i.test(x.body) && x.body.length > 200,
       'unknown path still gets the styled 404 from the embedded copy, not "not found"',
@@ -105,7 +118,7 @@ const get = (p, opts) => new Promise((resolve, reject) => {
     server.close();
     console.log('\n' + '='.repeat(56));
     if (fails.length) { fails.forEach((f2) => console.log('   - ' + f2)); console.log('\u2717 no-fallback: ' + fails.length + ' failure(s)'); process.exit(1); }
-    console.log('\u2713 no-fallback: the embedded bodies carry the lock screen and the 404 (3 checks)');
+    console.log('\u2713 no-fallback: embedded bodies carry the lock screen, its stamp, and the 404 (' + pass + ' checks)');
     return;
   }
 
@@ -113,7 +126,7 @@ const get = (p, opts) => new Promise((resolve, reject) => {
   if (process.argv.indexOf('--order') >= 0) {
     const g = require(path.join(ROOT, 'api/_gate.js'));
     const out = String(g.gateScreen('/detector.html'));
-    const stamped = /var __GATE_TARGET = "\/detector\.html"/.test(out);
+    const stamped = /var __GATE_TARGET\s*=\s*"\/detector\.html"/.test(out);
     const notFallbackOnly = !/location\.reload/.test(out) || stamped;
     console.log(stamped && notFallbackOnly ? 'ORDER-OK' : 'ORDER-BAD ' + JSON.stringify(out.match(/var __GATE_TARGET[^\n]{0,40}/) || ['no stamp'][0]));
     process.exit(stamped && notFallbackOnly ? 0 : 1);
@@ -164,8 +177,9 @@ const get = (p, opts) => new Promise((resolve, reject) => {
     need(h4.headers['x-annotate-build'] === hb.headers['x-annotate-build'],
       'and on the 402 too, which the gate assembles itself and never passes through nextHandler',
       String(h4.headers['x-annotate-build']));
-    need(/vercel-gate-/.test(fs.readFileSync(path.join(ROOT, 'api/_gate.js'), 'utf8')),
+    need(/const GATE_BUILD = 'vercel-gate-\d{4}-\d{2}-\d{2}\.\d+'/.test(fs.readFileSync(path.join(ROOT, 'api/_gate.js'), 'utf8')),
       'GATE_BUILD lives in the module the adapter and the gate share (one place to bump)');
+
   }
   let r = await get('/index.html');
   need(r.status === 200 && /AnnotateTrainer/.test(r.body), 'a free page is served through the function', r.status + ' ' + r.body.slice(0, 60));
@@ -300,7 +314,7 @@ const get = (p, opts) => new Promise((resolve, reject) => {
   const gre3 = (o3.match(/\u2713/g) || []).length;
   need(code3 === 0, 'with NO fallback files on disk (bundled-runtime shape) the gate still answers 402 + 404',
     gre3 + ' green; ' + (o3.split('\n').filter((l) => /\u2717|failure/.test(l)).slice(0, 2).join(' | ') || e3.join('').slice(0, 160)).slice(0, 220));
-  need(/no-fallback: the embedded bodies/.test(o3), 'that pass actually ran the three embedded-body checks', o3.slice(-80));
+  need(/no-fallback: embedded bodies carry/.test(o3), 'that pass actually ran the embedded-body checks', o3.slice(-80));
   require('fs').rmSync(dir3, { recursive: true, force: true });
 
   // All three embeds, compared AS THE MODULE EXPOSES THEM. Asserting on the source text of the constant
@@ -312,6 +326,32 @@ const get = (p, opts) => new Promise((resolve, reject) => {
     need(embedded[name] === want, 'the embedded ' + name + ' is byte-identical to ' + file + ' (run tools/embed-fallbacks.js)',
       'read ' + String(embedded[name] || '').length + 'B vs ' + want.length + 'B');
   }
+  // The stamp lives in the adapter now, on the way out, so assert it on the wire — including the two
+  // ?next= shapes that must NOT be honoured.
+  {
+    const cold = await get('/gate.html');
+    need(cold.status === 200 && cold.body.indexOf('@@GATE_PATH@@') < 0, 'gate.html never carries the sentinel to a browser',
+      (cold.body.match(/var __GATE_TARGET[^\n]{0,30}/) || ['missing'])[0]);
+    const withNext = await get('/gate.html?next=/task.html');
+    need(withNext.body.indexOf('"/task.html"') >= 0, 'gate.html?next=/task.html stamps the return path',
+      (withNext.body.match(/var __GATE_TARGET[^\n]{0,30}/) || ['missing'])[0]);
+    const evil = await get('/gate.html?next=' + encodeURIComponent('//evil.example/x.html'));
+    const evil2 = await get('/gate.html?next=' + encodeURIComponent('https://evil.example/x.html'));
+    // Quote-agnostic on purpose: the stamp writes JSON.stringify('') (two double quotes) while an
+    // UNrendered file carries the `''` source default (two single ones). What matters, and what this
+    // asserts, is that no attacker-chosen target was written in — not which empty literal proves it.
+    const blank = (b) => /var __GATE_TARGET\s*=\s*(''|"")/.test(b) && b.indexOf('evil.example') < 0;
+    need(blank(evil.body) && blank(evil2.body),
+      'protocol-relative and absolute next= targets are blanked, never stamped',
+      'st=' + evil.status + '/' + evil2.status + ' len=' + evil.body.length + '/' + evil2.body.length +
+        ' | ' + (evil.body.match(/var __GATE_TARGET[^\n]{0,30}/) || ['none'])[0] + ' // ' +
+        (evil2.body.match(/var __GATE_TARGET[^\n]{0,30}/) || ['none'])[0]);
+    const pay = await get('/task.html');
+    need(pay.status === 402 && /var __GATE_TARGET = "\/task\.html"/.test(pay.body),
+      'the refusal of a paid page stamps THAT page, so unlocking returns there',
+      (pay.body.match(/var __GATE_TARGET[^\n]{0,34}/) || ['missing'])[0]);
+  }
+
   need(/@@GATE_PATH@@/.test(embedded.EMBED_SCREEN),
     'the embedded gate screen still carries the render token server.js/_gate.js substitute into');
   // The regression this exists to prevent: deploy/gate-fallback.html IS present in the Vercel artifact

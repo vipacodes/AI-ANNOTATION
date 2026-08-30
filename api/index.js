@@ -29,6 +29,7 @@ module.exports = async function vercelHandler(req, res) {
   try {
     const host = req.headers['x-forwarded-host'] || req.headers.host || 'vercel';
     const proto = req.headers['x-forwarded-proto'] || 'https';
+    const reqUrl = req.url || '/';
     const path = require('./_gate.js').originalPath(req);
     const url = proto + '://' + host + path + (req.url.indexOf('?') >= 0 ? req.url.slice(req.url.indexOf('?')) : '');
 
@@ -73,12 +74,59 @@ module.exports = async function vercelHandler(req, res) {
     // (its context.fetch of gate.html) and therefore never passes through nextHandler — a header set
     // only there was missing from exactly the response I needed to identify.
     try { res.setHeader('x-annotate-build', GATE_BUILD); } catch (e) { /* headers already sent: nothing to do */ }
-    res.statusCode = response.status;
-    response.headers.forEach((v, k) => res.setHeader(k, v));
-    if (response.body) {
-      const buf = Buffer.from(await response.arrayBuffer());
-      return res.end(buf);
+    // ONE render point. The lock screen can be assembled four ways — the gate's own inline copy, a
+    // context.fetch of the deployed gate.html, the file read by nextHandler, or the shipped fallback — and
+    // stamping inside each of them turned into a fight over which branch ran first, with an unstamped
+    // screen winning locally (gate.html exists) and a different one winning on Vercel (it does not). So:
+    // anything leaving this function that still carries the sentinel gets the refused path written into
+    // it, no matter who built it. Buffered only for that one case, so a normal page streams untouched.
+    // The lock screen is rendered in one place, for both shapes of it: a refusal of a paid page stamps
+    // the path that was refused, and the gate page itself stamps the ?next= it was linked with. Both
+    // need stamping because the file served for /gate.html is the bucket/disk copy, which carries the
+    // sentinel and nothing else — and a screen that knows the path is the difference between "unlock and
+    // you are back where you were" and "unlock and you are on the marketing page again".
+    const htmlish = /text\/html/.test(response.headers.get('content-type') || '');
+    const isLock = (response.status === 402 && path !== '/gate.html') ||
+      (response.status === 200 && path === '/gate.html');
+    // Buffer once, up front: `await response.text()` consumed the stream and every later
+    // response.arrayBuffer() then threw "Body is unusable" — which the fail-closed catch turned into a
+    // 500 on exactly the lock screen. Read the body a single time and hand out pieces of it.
+    let outText = null;
+    let outBuf = null;
+    if (response.body) outBuf = Buffer.from(await response.arrayBuffer());
+    if (htmlish && isLock && outBuf) {
+      const text = outBuf.toString('utf8');
+      if (text.indexOf('@@GATE_PATH@@') >= 0 || /var __GATE_TARGET\s*=/.test(text)) {
+        let target = path;
+        if (path === '/gate.html') {
+          const q = (new URLSearchParams(reqUrl.slice(reqUrl.indexOf('?') + 1)).get('next') || '').trim();
+          // Same rule gate.html applies client-side: single slash, no scheme, no protocol-relative
+          // double slash, and no query of its own. Anything else becomes '' and the screen reloads.
+          // one leading slash, never two, no scheme colon, no query/hash — `//evil.example` is
+          // protocol-relative and would leave the site with the key in hand, and `/a/../../etc` is out
+          // anyway because dots are only allowed inside a segment, never as a whole one.
+          target = /^\/[\w.-]+(\/[\w.\/-]*)?$/.test(q) && q.indexOf(':') < 0 ? q : '';
+          // ^ one leading slash, no second one, no scheme colon, no query: `//evil.example` is
+          // protocol-relative and would leave the site with the key in hand. gate.html re-checks the
+          // same shape client-side, so a stamp that slips through here is still refused there.
+        }
+        const lit = JSON.stringify(target);
+        outText = text.indexOf('/*@@GATE_PATH@@*/') >= 0
+          ? text.replace("/*@@GATE_PATH@@*/''", lit)
+          : text.replace(/var __GATE_TARGET\s*=\s*[^;]*;/, 'var __GATE_TARGET = ' + lit + ';');
+      }
     }
+
+    res.statusCode = response.status;
+    response.headers.forEach((v, k) => {
+      // A stamped body is a different length from the one the gate measured. Rather than send a
+      // content-length that does not match (truncated page, half a lock screen), drop it: node will
+      // chunk-encode, and correctness of the page beats a byte-count optimisation.
+      if (outText !== null && k.toLowerCase() === 'content-length') return;
+      res.setHeader(k, v);
+    });
+    if (outText !== null) return res.end(Buffer.from(outText, 'utf8'));
+    if (outBuf) return res.end(outBuf);
     return res.end();
   } catch (e) {
     // A throw here is what the "no handler exported" deploy turned into a Vercel-branded 500 page.
