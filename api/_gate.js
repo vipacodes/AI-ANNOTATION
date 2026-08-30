@@ -38,7 +38,7 @@ globalThis.env = Object.assign({}, process.env);
    and "the gate is still answering from gate-fallback.html although the ordering fix is committed" was
    unanswerable without something inside the artifact that reports itself. Bump it with any change to the
    gate plumbing; tests and docs then have a string to assert on instead of a guess. */
-const GATE_BUILD = 'vercel-gate-2026-08-30.3';
+const GATE_BUILD = 'vercel-gate-2026-08-30.4';
 
 const ROOT = process.env.ANNOTATE_DEPLOY_ROOT || path.join(__dirname, '..');
 const FN = path.join(ROOT, 'deploy/cloudflare-pages-function.js');

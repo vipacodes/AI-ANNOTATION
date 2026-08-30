@@ -148,6 +148,13 @@ const get = (p, opts) => new Promise((resolve, reject) => {
     y = await get('/task.html', { headers: { cookie: 'at_key=' + KEY } });
     need(y.status === 200 && /AnnotateTrainer|Practise|task/i.test(y.body) && y.body.length > 900,
       'a key-holder gets the REAL paid page through the mirror', y.status + ' ' + y.body.length + 'B ' + y.body.slice(0, 60));
+    // The "why is the page showing HTML codes" regression. Supabase answers a GET of text/html with
+    // text/plain + nosniff unless you own a custom domain, so a mirrored page inherited that label and
+    // the browser printed the markup it should have painted. The bytes were never wrong; the type was.
+    need(/^text\/html/i.test(y.headers['content-type'] || ''), 'the mirrored page is re-typed to text/html at our boundary',
+      String(y.headers['content-type']));
+    need(!/nosniff/i.test(String(y.headers['x-content-type-options'] || '')),
+      "and the origin's nosniff does not ride along to veto the render", String(y.headers['x-content-type-options']));
     y = await get('/js/tasks.js', { headers: { cookie: 'at_key=' + KEY } });
     need(y.status === 200 && /window\.Tasks/.test(y.body) && y.body.length > 1000,
       'and the real corpus, not the empty stub', y.status + ' ' + y.body.length + 'B');

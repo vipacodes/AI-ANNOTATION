@@ -117,12 +117,28 @@ module.exports = async function vercelHandler(req, res) {
       }
     }
 
+    // Content type is decided HERE, by the path, not inherited from the origin. The mirror's bytes come
+    // from a Supabase Edge Function, and Supabase rewrites every GET that returns text/html into
+    // text/plain (+ nosniff) unless you are on Pro with a custom domain — documented at
+    // supabase.com/docs/guides/functions/limits. So a legitimately unlocked paid page arrived at the
+    // browser as a plain-text listing of its own markup: "why is the page showing html codes". The
+    // bytes were always fine; the label was not. Vercel has no such rule, so we own the label.
+    const EXT_TYPE = {
+      '.html': 'text/html; charset=utf-8', '.js': 'application/javascript; charset=utf-8',
+      '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8',
+      '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.ico': 'image/x-icon',
+      '.txt': 'text/plain; charset=utf-8', '.md': 'text/markdown; charset=utf-8'
+    };
+    const typedByExt = EXT_TYPE[(path.match(/\.[a-z0-9]+$/i) || [''])[0].toLowerCase()] || '';
+    if (typedByExt) response.headers.set('content-type', typedByExt);
+
     res.statusCode = response.status;
     response.headers.forEach((v, k) => {
       // A stamped body is a different length from the one the gate measured. Rather than send a
       // content-length that does not match (truncated page, half a lock screen), drop it: node will
       // chunk-encode, and correctness of the page beats a byte-count optimisation.
       if (outText !== null && k.toLowerCase() === 'content-length') return;
+      if (typedByExt && k.toLowerCase() === 'x-content-type-options') return;   // our type, our word
       res.setHeader(k, v);
     });
     if (outText !== null) return res.end(Buffer.from(outText, 'utf8'));

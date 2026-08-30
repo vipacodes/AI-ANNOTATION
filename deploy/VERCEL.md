@@ -1,9 +1,37 @@
 Vercel notes for this repository. Read the first section before you click Deploy.
 
+   READ THIS FIRST — WHICH URL TO GIVE PEOPLE
+   ==========================================
+
+   Use the Vercel URL to be read. Use the Supabase URL as the backend.
+
+   A Supabase Edge Function CANNOT serve a readable HTML page from its project domain. Their own docs,
+   twice: "HTML content is not supported. GET requests that return text/html will be rewritten to
+   text/plain" (supabase.com/docs/guides/functions/http-methods, /development-tips) and "Serving of HTML
+   content is only supported with custom domains" (/guides/functions/limits). Storage does the same to
+   .html objects (github.com/orgs/supabase/discussions/39110). A Pro plan with a custom domain is the only
+   way out, and there is no config, header or Response option that beats it — verified here from the live
+   function: `content-type: text/plain`, `x-content-type-options: nosniff`, on every path, with the
+   module's own `x-served-by: annotate-edge` header still present, so the rewrite happens after the code
+   returns. `nosniff` also removes the browser's option of guessing.
+
+   Consequence: someone who opens the Supabase URL in a browser sees the site's MARKUP, not the site.
+   That is the "why is the page showing html codes and not tasks" report, and it is not a rendering bug —
+   the bytes were correct the whole time, the label was forced. A function reply with a
+   `text/plain; charset=utf-8` body that starts `<!DOCTYPE html>` is this, and nothing else.
+
+   What the two URLs are, now:
+     · Vercel  — renders every page, free and paid, enforces the same gate against the same key database,
+                 and pulls paid bytes from the function (see MIRROR below). This is the front door.
+     · Supabase — the origin: the bucket that holds the paid corpus, the RPCs that check keys, the crypto
+                 routes. Reach for it to buy (buy.html renders as text; the payment panel's own fetches are
+                 JSON and work), and for anything you script rather than click.
+   A browser pointed at the Supabase URL now also gets a one-line notice at the top of the raw document
+   naming the URL that renders, so nobody has to decode what they are looking at.
+
    A Vercel deploy of this repo is only safe with `vercel.json` + `api/index.js` in place, which are
    committed. Everything below is what those two files are for, and what a Vercel project does without
-   them, and what a naive deploy does. The recommended deployment remains the Supabase function (DEPLOY.md § A2): it serves the site
-   AND enforces the lock from one URL, and it is the only variant that takes payments.
+   them, and what a naive deploy does.
 
 WHAT YOU SAW
 ============
@@ -87,6 +115,15 @@ vercel.json
     a request loop. `tests/vercel-entry.js --mirror` exercises the whole path against the live origin and
     asserts both directions: a key-holder gets 200 and 23 KB of graded workspace, an anonymous visitor
     still gets the lock screen.
+
+    The mirror also OWNS the content-type of what it proxies, by extension, in api/index.js. It has to:
+    the origin's HTML arrives labelled `text/plain` with `nosniff` (the Supabase rule above), and Vercel
+    passes inherited headers straight through — so a paid page reached by an unlocked, paying visitor was
+    printed as source code on a host that would happily have rendered it. Two checks in
+    `tests/vercel-entry.js` pin it: mirrored `.html` must come back `text/html`, and
+    `x-content-type-options` must not ride along. Bump `GATE_BUILD` in api/_gate.js with any change to
+    this plumbing; `x-annotate-build` is on every function reply and is the only way to tell a stale
+    artifact from a live one that took a different branch.
 
     Add a page to PROTECT? Add it here in the same commit. `tests/vercel-entry.js` fails if the two
     lists drift, and a second phase of that test copies the repo minus .vercelignore into a temp

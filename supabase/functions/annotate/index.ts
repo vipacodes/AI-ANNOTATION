@@ -42,7 +42,7 @@ const ANON_KEY = env('ANON_KEY') || env('SUPABASE_ANON_KEY') || env('PUBLISHABLE
 // into a curl. It earned its place: Supabase accepted two deploys in a row while the worker kept
 // serving the previous build, so a route I had just added looked like it was missing from the code.
 // Every "that cannot happen" debugging loop in this file started with a stale build marker.
-const BUILD = 'annotate-2026-08-30.10';
+const BUILD = 'annotate-2026-08-30.11';
 
 const KEY_RE = /^([A-Za-z0-9]{6,10})\.([A-Za-z0-9_\-]{20,})\.(\d{10,13})$/;
 const KEY_COOKIE = 'at_key';
@@ -797,7 +797,26 @@ Deno.serve(async (req) => {
   const cache = (!isProtected(p) && /^\/(?:css|js|assets)\//.test(p))
     ? 'public, max-age=300, stale-while-revalidate=60'
     : 'no-store';
+  // Supabase rewrites text/html to text/plain for anything served from *.supabase.co without a custom
+  // domain (docs: /guides/functions/limits), so a browser pointed at this URL reads the site's markup
+  // instead of seeing it. The bytes are intact; only the label is forced. For a real navigation we say so
+  // in the document itself, and name the URL that renders, rather than leave a visitor squinting at tags.
+  // Deliberately NOT applied to the /gate.html render below, and never to a fetch() from another
+  // runtime: the banner is keyed on a browser's Accept header, so the mirror's own pulls stay clean.
+  const isBrowserNav = /text\/html/.test(req.headers.get('accept') || '') &&
+    /mozilla|chrome|safari|firefox|edg\//i.test(req.headers.get('user-agent') || '');
   let served: BodyInit = up.body;
+  if (isBrowserNav && /\.html$/i.test(p)) {
+    const doc = await up.text();
+    served = doc.replace(/<head>([^]*?)>/i, '<head>$1' +
+      '<style>#sb-note{all:initial;box-sizing:border-box;display:block;background:#1a1428;border:1px solid #4b3f8f;' +
+      'color:#e9e4ff;font:13px/1.5 ui-sans-serif,system-ui,sans-serif;padding:12px 16px;margin:0}' +
+      '#sb-note a{color:#b6a8ff;text-decoration:underline}</style>' +
+      '</head><body style="margin:0"><div id="sb-note">This URL is a Supabase function, and Supabase serves ' +
+      'HTML to browsers as <b>plain text</b> unless you pay for a custom domain — so the page below shows its ' + 'own markup. The same site, rendered and gated: <a href="https://ai-annotation-tau.vercel.app/' +
+      p.replace(/^\//, '') + '">ai-annotation-tau.vercel.app</a>. Keys, payments and your data work from either.</div>')
+      .replace(/^/, '');
+  }
   if (p === '/gate.html') {
     // The lock screen is the one page that must be RENDERED rather than streamed: its sentinel holds
     // the path the visitor should land on after a successful unlock, and handing out the bucket copy
