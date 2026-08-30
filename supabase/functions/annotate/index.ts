@@ -42,7 +42,7 @@ const ANON_KEY = env('ANON_KEY') || env('SUPABASE_ANON_KEY') || env('PUBLISHABLE
 // into a curl. It earned its place: Supabase accepted two deploys in a row while the worker kept
 // serving the previous build, so a route I had just added looked like it was missing from the code.
 // Every "that cannot happen" debugging loop in this file started with a stale build marker.
-const BUILD = 'annotate-2026-08-30.14';
+const BUILD = 'annotate-2026-08-30.15';
 
 const KEY_RE = /^([A-Za-z0-9]{6,10})\.([A-Za-z0-9_\-]{20,})\.(\d{10,13})$/;
 const KEY_COOKIE = 'at_key';
@@ -239,18 +239,27 @@ async function fulfil(ref: string, planKey: string) {
    because it belongs to whoever deploys this. (A duplicate `const BUCKET` I briefly added next to it was
    a redeclaration error and the Deno suite rejected the file — that suite is the reason this shipped
    fixed rather than live-broken.) */
-const RENDER_URL = String(globalThis.env?.RENDER_URL || 'https://ai-annotation-tau.vercel.app').replace(/\/+$/, '');
+const RENDER_URL = String(Deno.env.get('RENDER_URL') || 'https://ai-annotation-tau.vercel.app').replace(/\/+$/, '');
 
 /* Supabase rewrites every text/html GET from a project domain into text/plain + nosniff (their docs:
    /guides/functions/limits; Storage does the same to .html objects). So a browser opening this URL reads
    markup instead of the site, and there is nothing the function can do about the label. What it CAN do is
    say so, in the document, once, for a real navigation. Keyed on Accept + User-Agent so it never attaches
    to a programmatic pull — including the Vercel mirror's, which re-types the bytes itself. */
-const NOTE = '<div id="sb-note" style="all:initial;box-sizing:border-box;display:block;background:#1a1428;' +
-  'border:1px solid #4b3f8f;color:#e9e4ff;font:13px/1.5 ui-sans-serif,system-ui,sans-serif;padding:12px 16px;' +
-  'margin:0">This URL is a Supabase function, and Supabase serves HTML to browsers as <b>plain text</b> ' +
-  'unless you pay for a custom domain — so this page shows its own markup. The same site, rendered and ' +
-  'gated, with the same keys: <a href="$HERE" style="color:#b6a8ff;text-decoration:underline">$WHERE</a>.</div>';
+// An overlay rather than a div in <head>, for two reasons that only matter in this specific case: the
+// document may be a 402 whose <head> is short and whose body is the lock form, and a block inserted at
+// the top of a RAW-text view is invisible anyway. position:fixed means it sits over the source listing,
+// which is the only place a browser visitor to this URL can be told anything. <noscript>-free and
+// dismissible: a link to leave, and a query flag to stop the notice, so it cannot become a wall.
+const NOTE = '<div id="sb-note" style="all:initial;position:fixed;top:0;left:0;right:0;z-index:2147483647;' +
+  'box-sizing:border-box;display:flex;gap:14px;align-items:center;flex-wrap:wrap;background:#171129;' +
+  'border-bottom:1px solid #4b3f8f;color:#e9e4ff;font:13px/1.5 ui-sans-serif,system-ui,sans-serif;' +
+  'padding:10px 16px;box-shadow:0 2px 14px rgba(0,0,0,.4)">Supabase serves HTML from this URL as ' +
+  '<b>plain text</b> (no custom domain), so you are reading markup. Same site, rendered, same keys: ' +
+  '<a href="$HERE" style="color:#b6a8ff;text-decoration:underline">open it on $WHERE</a>' +
+  '<a href="$HERE" style="background:#6a5bf0;border:1px solid #7f70ff;border-radius:7px;padding:5px 11px;' +
+  'color:#fff;text-decoration:none;font-weight:700">Go there</a>' +
+  '<a href="?notice=0" style="color:#8b93a6;margin-left:auto;text-decoration:none">hide this</a></div>';
 function annotateNotice(doc, where) {
   // NOT encodeURIComponent: applied to a whole URL it percent-encodes the scheme too
   // ("https%3A%2F%2Fhost%2Ftask.html"), which renders a link that goes nowhere. The path reaching here
@@ -800,9 +809,10 @@ Deno.serve(async (req) => {
         // The lock screen is the FIRST thing a browser sees at this URL, and it is built here rather than
         // served from the bucket, so it needs the notice on its own path or a visitor reads raw tags and
         // no explanation anywhere.
-        const lockDoc = /text\/html/.test(req.headers.get('accept') || '') &&
-          /mozilla|chrome|safari|firefox|edg\//i.test(req.headers.get('user-agent') || '')
-          ? annotateNotice(screen, RENDER_URL + p) : screen;
+        const wantNotice = /text\/html/.test(req.headers.get('accept') || '') &&
+          /mozilla|chrome|safari|firefox|edg\//i.test(req.headers.get('user-agent') || '') &&
+          new URL(req.url).searchParams.get('notice') !== '0';
+        const lockDoc = wantNotice ? annotateNotice(screen, RENDER_URL + p) : screen;
         return new Response(lockDoc, { status: 402, headers: { 'content-type': TYPES['.html'], 'cache-control': 'no-store' } });
       }
       return new Response('locked', { status: 402, headers: { 'content-type': 'text/plain' } });
@@ -844,7 +854,8 @@ Deno.serve(async (req) => {
   // Deliberately NOT applied to the /gate.html render below, and never to a fetch() from another
   // runtime: the banner is keyed on a browser's Accept header, so the mirror's own pulls stay clean.
   const isBrowserNav = /text\/html/.test(req.headers.get('accept') || '') &&
-    /mozilla|chrome|safari|firefox|edg\//i.test(req.headers.get('user-agent') || '');
+    /mozilla|chrome|safari|firefox|edg\//i.test(req.headers.get('user-agent') || '') &&
+    url.searchParams.get('notice') !== '0';
   let served: BodyInit = up.body;
   if (isBrowserNav) served = annotateNotice(await up.text(), RENDER_URL + p);
   if (p === '/gate.html') {
