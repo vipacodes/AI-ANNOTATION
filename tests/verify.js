@@ -489,6 +489,29 @@ async function readyKeyed(url, key) {
       need(blocked.code === 402, 'protected page 402 without a key', 'got ' + blocked.code);
       const blockedBody = await blocked.body;
       need(/Enter your access key/i.test(blockedBody) && !/getAnswer|rubricFor|Tasks\.get/.test(blockedBody), '402 body is the gate screen, not the task source', 'leaked content');
+      // Unlocking and landing on the home page is a bug a paying customer feels: the screen has to know
+      // which path it was rendered for. server.js stamps it in, and gate.html only trusts same-site
+      // relative paths — an open redirect on the page that collects keys is not a theoretical problem.
+      const tgt = await get('/detector.html'); const tgtBody = await tgt.body;
+      need(tgt.code === 402 && /var __GATE_TARGET\s*=\s*"\/detector\.html"/.test(tgtBody),
+        'the rendered lock screen carries the path it refused, ready to return there', tgtBody.match(/__GATE_TARGET[^;]{0,40}/) ? tgtBody.match(/__GATE_TARGET[^;]{0,40}/)[0] : 'no stamp');
+      need(!/@@GATE_PATH@@/.test(tgtBody), 'the sentinel is fully consumed by the render', 'left in output');
+      const cold = await get('/gate.html'); const coldBody = await cold.body;
+      need(cold.code === 200 && /var __GATE_TARGET\s*=\s*''/.test(coldBody),
+        'a cold visit to gate.html is rendered too (no raw token, and it reloads instead of bouncing home)',
+        /@@GATE_PATH@@/.test(coldBody) ? 'token left in output' : (coldBody.match(/var __GATE_TARGET[^\n]{0,30}/) || ['missing'])[0]);
+      const gh = fs.readFileSync(path.join(ROOT, 'gate.html'), 'utf8');
+      const vChk = [['fn', /function safeTarget/.test(gh)], ['rel', /charAt\(1\) === '\/'/.test(gh)], ['abs', /\[\\\/:\?#\\s\]/.test(gh)]];
+      need(vChk.every((x) => x[1]), 'gate.html validates the return target: no protocol-relative, no absolute, no query',
+        'missing: ' + vChk.filter((x) => !x[1]).map((x) => x[0]).join(',') + ' | file has ' + gh.length + 'B');
+      need(/\?k=|next=/.test(fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8')) && /replaceState/.test(gh),
+        'the front page hands the key to the gate and the gate scrubs it from the URL', 'no handoff');
+      const ih = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+      need(/id="keyin"/.test(ih) && /paste key/.test(ih) && /gate\.html/.test(ih),
+        'the hero offers an "already have a key" entry point to the real gate (not a second unlock impl)', 'no keyin');
+      need(ih.indexOf('/unlock') < 0,
+        'the hero defers to the gate instead of re-implementing unlock, so key checks stay in one file',
+        'index.html references /unlock directly');
       const blockedJs = await get('/js/tasks.js');
       const jsBody = await blockedJs.body;
       need(blockedJs.code === 402 && /list:function\(\)\{return\[\]/.test(jsBody) && jsBody.length < 200, 'the graded corpus itself is withheld: 402 + empty stub (' + jsBody.length + ' B)', blockedJs.code + ' / ' + jsBody.slice(0, 80));

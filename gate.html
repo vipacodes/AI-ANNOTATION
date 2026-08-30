@@ -36,13 +36,50 @@
 </div>
 <script src="js/access.js"></script>
 <script>
+/* Where to send them once the key works. Unlocking from the 402 screen and landing on the home page is
+   the worst possible follow-through on a payment, so the page that refused the path renders it in here.
+   The token is unmistakable rather than a bare __GATE_TARGET identifier, because the first version used
+   that and String.replace found the mention of it in THIS comment and substituted into the prose. The
+   file also carries no backticks on purpose: tools/embed-fallbacks.js embeds it in api/_gate.js for
+   Vercel, and a backtick there is a syntax error in the paywall. Keep it that way.
+   Anything that is not a same-site relative path is then discarded: an open redirect on the page whose
+   whole job is "hand me your key" is not a theoretical problem. */
+var __GATE_TARGET = /*@@GATE_PATH@@*/'';
+function safeTarget(u) {
+  u = String(u || '');
+  if (!u || u.charAt(0) !== '/' || u.charAt(1) === '/') return '';
+  if (/[\/:?#\s]/.test(u)) return '';
+  if (!/^[a-z0-9._\/-]{1,64}\.(html|json)$/i.test(u)) return '';
+  return u;
+}
+function target() {
+  var t = safeTarget(typeof __GATE_TARGET === 'string' ? __GATE_TARGET : '');
+  if (t) return t;
+  var q = (location.search || '').match(/[?&]next=([^&]+)/);
+  if (q) { try { t = safeTarget(decodeURIComponent(q[1])); } catch (e) { t = ''; } }
+  // No target means we are being looked at directly, not rendered as somebody's refusal: reloading the
+  // current URL is then the honest answer (it IS the paid page on a 402 render), and only a cold visit
+  // to gate.html itself falls through to the workspace. Landing on the home page after paying for
+  // access was the defect that made this function necessary.
+  return t || (location.pathname.indexOf('gate.html') >= 0 ? 'queue.html' : '');
+}
 var go = function () {
   var m = document.getElementById('m'); m.textContent = 'checking…'; m.style.color = 'var(--dim)';
   Access.unlock(document.getElementById('k').value, function (ok, msg) {
     m.textContent = msg; m.style.color = ok ? 'var(--ok)' : 'var(--bad)';
-    if (ok) setTimeout(function () { location.href = 'index.html'; }, 800);
+    if (ok) { var t = target(); setTimeout(function () { if (t) location.href = t; else location.reload(); }, 800); }
   });
 };
+/* The front page posts a key here as ?k= so a visitor with one on their clipboard does not have to
+   retype 60 characters. Keys in URLs land in history and in any log that records full paths, so it is
+   filled into the field and then scrubbed from the address bar before anything else runs — the key lives
+   in the input, not in the location. */
+(function () {
+  var m = (location.search || '').match(/[?&]k=([^&]+)/); if (!m) return;
+  var v = ''; try { v = decodeURIComponent(m[1]); } catch (e) { v = m[1]; }
+  var f = document.getElementById('k'); if (f && !f.value) f.value = v.trim();
+  if (history && history.replaceState) { try { history.replaceState(null, '', location.pathname); } catch (e) { } }
+})();
 document.getElementById('go').onclick = go;
 document.getElementById('k').addEventListener('keydown', function (e) { if (e.key === 'Enter') go(); });
 </script>

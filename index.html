@@ -36,6 +36,24 @@
     <a class="btn big ghost" href="guide.html">Read the free guide first</a>
     <a class="btn big ghost" href="buy.html">Buy access</a>
   </div>
+  <!-- Someone arriving with a key in their clipboard had to find gate.html by guessing the filename.
+       The paid entry point deserves to be on the front page; it is a form to the gate, not a second
+       unlock implementation, so the shape checks and the audit trail stay in one place. -->
+  <form class="keyin" id="keyin" autocomplete="off">
+    <label class="xs dim" for="keyin-i">Already have a key?</label>
+    <input id="keyin-i" type="text" inputmode="text" spellcheck="false" placeholder="paste key" aria-label="Access key">
+    <button class="btn sm" type="submit">Unlock</button>
+  </form>
+  <script>
+  (function () {
+    var f = document.getElementById('keyin'); if (!f) return;
+    f.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var v = (document.getElementById('keyin-i').value || '').trim();
+      location.href = 'gate.html' + (v ? '?k=' + encodeURIComponent(v) : '');
+    });
+  })();
+  </script>
   <p class="xs dim" style="margin-top:16px">Start with the platform you actually applied to — the funnel, the traps and the practice set differ by vendor. Time invested here is tracked as <b>unpaid</b> in your ledger. That's the point.</p>
 </section>
 

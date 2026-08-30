@@ -280,10 +280,19 @@ const get = (p, opts) => new Promise((resolve, reject) => {
   need(/no-fallback: the embedded bodies/.test(o3), 'that pass actually ran the three embedded-body checks', o3.slice(-80));
   require('fs').rmSync(dir3, { recursive: true, force: true });
 
-  const emb = fs.readFileSync(path.join(ROOT, 'api/_gate.js'), 'utf8');
-  const gsrc = fs.readFileSync(path.join(ROOT, 'deploy/gate-fallback.html'), 'utf8').replace(/\n$/, '');
-  need(emb.indexOf('const EMBED_GATE = `' + gsrc + '`;') >= 0,
-    'the embedded lock screen is byte-identical to deploy/gate-fallback.html (run tools/embed-fallbacks.js)');
+  // All three embeds, compared AS THE MODULE EXPOSES THEM. Asserting on the source text of the constant
+  // is what broke when the generator stopped using template literals — the check failed on a correct
+  // file, which is worse than not having it, because it teaches you to ignore it.
+  const embedded = require(path.join(ROOT, 'api/_gate.js'));
+  for (const [name, file] of [['EMBED_GATE', 'deploy/gate-fallback.html'], ['EMBED_404', '404.html'], ['EMBED_SCREEN', 'gate.html']]) {
+    const want = fs.readFileSync(path.join(ROOT, file), 'utf8').replace(/\n$/, '');
+    need(embedded[name] === want, 'the embedded ' + name + ' is byte-identical to ' + file + ' (run tools/embed-fallbacks.js)',
+      'read ' + String(embedded[name] || '').length + 'B vs ' + want.length + 'B');
+  }
+  need(/@@GATE_PATH@@/.test(embedded.EMBED_SCREEN),
+    'the embedded gate screen still carries the render token server.js/_gate.js substitute into');
+  need(!/<\/script>/.test(embedded.EMBED_SCREEN) || /<\/script>/i.test(fs.readFileSync(path.join(ROOT, 'api/_gate.js'), 'utf8')) === false,
+    'no raw </script> survives the embed, which would truncate the paywall inline script');
 
   fsx.rmSync(dir, { recursive: true, force: true });
 

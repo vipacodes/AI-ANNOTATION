@@ -69,6 +69,21 @@ function isPublic(p) { return PUBLIC.test(p); }/* Behind the key: the graded cor
    so the task data files are withheld too — locked requests get an empty stub instead. */
 const PROTECT = /^\/(?:task|queue|onboarding|detector|trust-safety|earnings)\.html$|^\/js\/(?:tasks|detector)\.js$|^\/data\//;
 
+/* The lock screen, rendered. gate.html carries a sentinel instead of a path, because a hard-coded
+   "back to the shop" link sends a subscriber to the home page after they have just paid for the
+   opposite. Both callers go through here: the 402 body gets the path that was refused, and a cold visit
+   to gate.html gets an empty target (which makes gate.html reload itself, and on any page that is the
+   page it was locked from, that reload is the answer). One renderer for both, or the token leaks into
+   the served copy and the return-to is silently dead — the first cut did exactly that, and the test
+   caught it as a note about a comment instead of a bug. */
+function gateScreen(refused) {
+  let html = fs.readFileSync(path.join(ROOT, 'gate.html'), 'utf8');
+  const lit = refused ? JSON.stringify(String(refused)) : "''";
+  if (html.indexOf('/*@@GATE_PATH@@*/') >= 0) html = html.replace('/*@@GATE_PATH@@*/\'\'', lit);
+  else html = html.replace(/var __GATE_TARGET = [^;]*;/, 'var __GATE_TARGET = ' + lit + ';');
+  return html;
+}
+
 /* ---- optional backend: verify keys against Supabase Postgres ----------------
    Set SUPABASE_URL (+ SUPABASE_ANON_KEY, or SERVICE_ROLE_KEY) and the gate asks
    public.key_check() instead of trusting a local secret file. You then get
@@ -187,6 +202,11 @@ const server = http.createServer(async (req, res) => {
     note: 'protected files return 402 (HTML: gate screen, JS: empty stub) unless a valid key is presented'
   });
 
+  if (p === '/gate.html' || p === '/gate') {
+    // public on purpose (it is how you buy your way in), but rendered, so the token never reaches a browser
+    res.writeHead(200, { 'content-type': TYPES['.html'], 'cache-control': 'no-store' });
+    return res.end(gateScreen(null));
+  }
   /* ---------- static ---------- */
   if (p === '/') p = '/index.html';
   if (!path.extname(p)) p += '.html';
@@ -205,7 +225,11 @@ const server = http.createServer(async (req, res) => {
       return res.end(stub);
     }
     res.writeHead(402, { 'content-type': TYPES['.html'], 'cache-control': 'no-store' });
-    return res.end(fs.readFileSync(path.join(ROOT, 'gate.html'), 'utf8'));
+    // The screen is rendered, not copied: the path we just refused is the one they should land on after
+    // a successful unlock. JSON.stringify so the value cannot break out of its script literal, and
+    // gate.html's own safeTarget() re-checks the shape before anything touches location.href. The token
+    // being replaced is the whole `''` default, so a missing render leaves valid JS behind.
+    return res.end(gateScreen('/' + String(p).replace(/^\//, '')));
   }
   const file = safeJoin('.' + p);
   if (!file || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
