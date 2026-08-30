@@ -178,7 +178,14 @@ const anyFetch = async (req) => {
     return tx ? send(200, tx) : send(404, { error: 'unknown tx' });
   }
   if (/\/ltc\/main$/.test(u.pathname)) return send(200, { height: store.tip });
-  if (u.pathname.indexOf('/storage/v1/object/') === 0) return send(404, { message: 'bucket not needed by these tests' });
+  // The serve path is now under test (the browser notice is spliced into SERVED html), so the bucket
+  // answers with a well-formed page instead of a 404. arrayBuffer() works on a string body, which is why
+  // this can stay a plain Response rather than a file on disk.
+  if (u.pathname.indexOf('/storage/v1/object/') === 0) {
+    return new Response('<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">'
+      + '<title>Bucket Page</title></head><body><main>payload</main></body></html>',
+      { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } });
+  }
   if (u.pathname === '/rest/v1/access_keys') return new Response(null, { status: 204 });
   store.errors.push('stub miss ' + u.pathname);
   return send(404, { message: 'stub miss ' + u.pathname });
@@ -548,11 +555,33 @@ section('nothing was swept under a stub');
     [...store.quotes.values()].map((x) => x.id + '=' + x.status).join(' '));
 }
 
+section('the browser-only notice: right bytes, right place, right conditions');
+{
+  const nav = (p) => H(new Request(BASE + p, { headers: { accept: 'text/html', 'user-agent': 'Mozilla/5.0 Chrome/126' } }), {});
+  const lock = await nav('/task.html');
+  const lockDoc = await lock.text();
+  ok('an unkeyed protected page still locks', lock.status === 402, String(lock.status));
+  ok('the lock screen carries the notice', lockDoc.indexOf('id="sb-note"') > -1, lockDoc.slice(0, 80));
+  ok('and it lands inside <body>, not in <head>', lockDoc.indexOf('id="sb-note"') > lockDoc.indexOf('<body'), 'note@' + lockDoc.indexOf('id="sb-note"') + ' body@' + lockDoc.indexOf('<body'));
+  const free = await (await nav('/index.html')).text();
+  ok('a free page carries it too', free.indexOf('sb-note') > free.indexOf('<body'), 'banner missing on served page');
+  ok('the served page is still well-formed at the tag level', /<head[^>]*>/.test(free) && !/<head[^>]*><div/.test(free) && free.indexOf('<meta charset="utf-8">') < free.indexOf('sb-note'), 'head clobbered');
+  ok('the notice links to the rendering host over https', /href="https:\/\/[^"]+"/.test(free) && free.indexOf('ai-annotation') > -1, (free.match(/href="[^"]{0,60}/) || [''])[0]);
+  ok('and it does not percent-encode that URL into a dead link', free.indexOf('%3A%2F%2F') < 0, 'encodeURIComponent over the whole URL');
+  const off = await (await nav('/index.html?notice=0')).text();
+  ok('?notice=0 silences it for a browser', off.indexOf('sb-note') < 0, 'not honoured');
+  const api = await (await get('/index.html')).text();
+  ok('a non-browser pull is never annotated (the mirror must get byte-exact content)', api.indexOf('sb-note') < 0, 'script pull got the banner');
+  const ua = await (await H(new Request(BASE + '/index.html', { headers: { accept: 'text/html', 'user-agent': 'curl/8' } }), {})).text();
+  ok('text/html alone is not enough: curl gets no banner either', ua.indexOf('sb-note') < 0, 'UA gate missing');
+}
+
 console.log('\n' + '='.repeat(58));
 if (fails.length) { console.log('\u2717 ' + fails.length + ' failure(s)'); fails.forEach((f) => console.log('   - ' + f)); Deno.exit(1); }
 console.log('\u2713 edge-deno: ' + pass + ' checks passed (real module, real Deno, stubbed services)');
 try { await stub.shutdown(); } catch (e) { }
 Deno.exit(0);
+
 `;
 
 const out = path.join(os.tmpdir(), 'annotate-edge-deno-' + process.pid + '.mts');

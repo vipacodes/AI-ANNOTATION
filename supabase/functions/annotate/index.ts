@@ -42,7 +42,7 @@ const ANON_KEY = env('ANON_KEY') || env('SUPABASE_ANON_KEY') || env('PUBLISHABLE
 // into a curl. It earned its place: Supabase accepted two deploys in a row while the worker kept
 // serving the previous build, so a route I had just added looked like it was missing from the code.
 // Every "that cannot happen" debugging loop in this file started with a stale build marker.
-const BUILD = 'annotate-2026-08-30.15';
+const BUILD = 'annotate-2026-08-30.17';
 
 const KEY_RE = /^([A-Za-z0-9]{6,10})\.([A-Za-z0-9_\-]{20,})\.(\d{10,13})$/;
 const KEY_COOKIE = 'at_key';
@@ -267,12 +267,14 @@ function annotateNotice(doc, where) {
   // quote or angle bracket to escape; the guard below is belt-and-braces for anything that calls it later.
   const safe = String(where || '/').replace(/["'<>]/g, '');
   const note = NOTE.replace(/\$HERE/g, safe).replace(/\$WHERE/g, safe);
-  // '<head>…</head>' with a [^>]* capture: the greedy .*</head> version of this matched the CLOSING tag
-  // too, so "$1" swallowed the '>' that ended <head> and the first meta tag came out unclosed.
-  const m = /<head[^>]*>/i.exec(doc);
-  if (m) return doc.slice(0, m.index + m[0].length) + note + doc.slice(m.index + m[0].length);
+  // <body> first, and never <head>: inserting "after <head…>" puts the div INSIDE the head, which is
+  // exactly what the first version did (verified in the served bytes: the notice appeared on line 3,
+  // before </head>). A browser would still paint it, but only because it repairs stray flow content; the
+  // edge-deno suite now asserts it lands after <body> so this cannot regress quietly.
   const b = /<body[^>]*>/i.exec(doc);
-  if (b) return doc.slice(0, b.index) + note + doc.slice(b.index);
+  if (b) return doc.slice(0, b.index + b[0].length) + note + doc.slice(b.index + b[0].length);
+  const m = /<head[^>]*>([\s\S]*?)<\/head>/i.exec(doc);
+  if (m) return doc.slice(0, m.index + m[0].length) + note + doc.slice(m.index + m[0].length);
   return note + doc;
 }
 
