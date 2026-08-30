@@ -29,6 +29,18 @@ Vercel notes for this repository. Read the first section before you click Deploy
    A browser pointed at the Supabase URL now also gets a one-line notice at the top of the raw document
    naming the URL that renders, so nobody has to decode what they are looking at.
 
+   Details of that notice, because each one cost a production fix and all three are asserted in
+   tests/edge-deno.js (BUILD annotate-2026-08-30.17):
+     - it is a fixed overlay inserted INSIDE <body>. Written after <head> it lands in the head, which a
+       browser still paints, so it looked fine while the markup was wrong.
+     - it appears only for a browser navigation: Accept: text/html AND a browser User-Agent. A curl or
+       the Vercel mirror must receive byte-exact content, or the mirror would serve our banner inside the
+       lock screen it renders. `?notice=0` turns it off for a human who wants the raw source.
+     - the link is the URL verbatim. encodeURIComponent over a whole URL percent-encodes the scheme and
+       produces a dead link, on the one page whose job is "click here instead".
+   Change where it points:  supabase functions secrets -r <ref> RENDER_URL=https://your-domain
+   Confirm which build answered:  curl -s <fn-url>/api/health   ->  {"build":"annotate-..."}
+
    A Vercel deploy of this repo is only safe with `vercel.json` + `api/index.js` in place, which are
    committed. Everything below is what those two files are for, and what a Vercel project does without
    them, and what a naive deploy does.
