@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Time & earnings — AnnotateTrainer</title>
+<link rel="stylesheet" href="css/app.css">
+<script>/* pre-paint lock: never flash protected content */(function(){var k="";try{k=localStorage.getItem("at_key")||""}catch(e){}var okk=/^[A-Za-z0-9]{6,10}\.[A-Za-z0-9_\-]{20,}\.[0-9]{10,13}$/.test(k)&&Number(String(k).split(".")[2])>=Date.now();if(!okk)document.write('<style>body[data-gated]>div{display:none!important}</style>')})();</script>
+</head>
+<body data-gated>
+<div id="app-banner"></div>
+<div class="shell"><main class="main">
+  <div class="up">Ledger</div>
+  <h1 style="font-size:26px">Time & earnings</h1>
+  <p class="sm dim" style="max-width:70ch">This page exists because the arithmetic of this work is not the hourly
+  rate. Assessment time, training time, queue gaps and rework loops all come out of your hours and none of them
+  appear in an advert. Nothing here is a promise about what you'd earn anywhere — it's a record of what you
+  actually spent.</p>
+
+  <div class="row between" style="margin-bottom:16px">
+    <div class="row" style="gap:10px;align-items:flex-end">
+      <div><label class="f" for="rate">Assumed rate for the maths (USD/hr)</label>
+        <input id="rate" type="number" min="1" max="200" step="1" style="width:120px" value="15"></div>
+      <button class="btn sm" onclick="setRate()">Apply</button>
+      <button class="btn ghost sm" onclick="wipe()">Reset all local data</button>
+    </div>
+    <span class="chip" id="saved">local only</span>
+  </div>
+
+  <div class="grid g4">
+    <div class="stat"><div class="l">Billable hours</div><div class="n ok" id="ph">0.00</div><div class="xs dim" id="pv">—</div></div>
+    <div class="stat"><div class="l">Unpaid screening</div><div class="n warn" id="uh">0.00</div><div class="xs dim" id="uv">—</div></div>
+    <div class="stat"><div class="l">Real hourly (all time)</div><div class="n" id="rh">—</div><div class="xs dim">paid ÷ total hours</div></div>
+    <div class="stat"><div class="l">Tasks needing rework</div><div class="n bad" id="rw">0</div><div class="xs dim">score &lt; 70</div></div>
+  </div>
+
+  <div class="grid g2" style="margin-top:16px;align-items:start">
+    <div class="panelbox">
+      <header><span>Last 7 days</span><span class="chip" id="wk">—</span></header>
+      <div class="body"><div class="kpi" id="kpi"></div>
+        <p class="xs dim mb0" style="margin-top:10px">Bars are seconds logged per day. A week this flat on a real
+        platform is a good week. Most contributor reports describe the opposite shape: two fat days, then nothing.</p></div>
+    </div>
+    <div class="card">
+      <h3>The projection people actually need</h3>
+      <table>
+        <tbody id="proj"></tbody>
+      </table>
+      <p class="xs dim mb0">Row 3 is where the advertising lives. Row 7 is what people report.</p>
+    </div>
+  </div>
+
+  <div class="panelbox" style="margin-top:16px">
+    <header><span>Per task type</span><span class="chip" id="tt-n">0 types</span></header>
+    <div class="body" style="padding:0"><table id="tt"><tbody></tbody></table></div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h3>Export</h3>
+    <p class="sm dim">Download your own ledger. Keep it. When an account gets restricted with a balance in
+    escrow, a contemporaneous record of dates, task IDs and minutes is the only artifact that has ever helped
+    anyone in the forums — screenshots of the dashboard alone usually don't, because the dashboard is exactly
+    what they revoke access to.</p>
+    <div class="row">
+      <button class="btn sm ghost" onclick="dl()">Download JSON</button>
+      <a class="btn sm ghost" href="trust-safety.html">Open the logbook →</a>
+    </div>
+  </div>
+</main></div>
+
+<script src="js/storage.js"></script>
+<script src="js/access.js"></script>
+<script src="js/tasks.js"></script>
+<script src="js/tasks.js"></script>
+<script src="js/app.js"></script>
+<script>
+App.shell('');
+var H = App.h;
+
+function setRate() {
+  var d = Store.get(); d.profile = d.profile || {}; d.profile.rate = Number(document.getElementById('rate').value) || 15;
+  Store.setProfile(d.profile); paint(); App.toast('rate applied to the maths only — this site does not pay you anything', 'info');
+}
+function wipe() { if (confirm('Clear all local practice data?')) { Store.reset(); location.reload(); } }
+
+function paint() {
+  var st = Store.stats(), d = Store.get();
+  var rate = (d.profile && d.profile.rate) || 15;
+  document.getElementById('rate').value = rate;
+  var totalH = st.paidHours + st.unpaidHours;
+  ph.textContent = st.paidHours.toFixed(2);
+  pv.textContent = App.money(st.earned);
+  uh.textContent = st.unpaidHours.toFixed(2);
+  uv.textContent = st.unpaidValue > 0 ? '≈ ' + App.money(st.unpaidValue) + ' of your own money' : 'nothing spent yet';
+  rh.textContent = totalH > 0 ? '$' + (st.earned / totalH).toFixed(2) : '—';
+  rh.className = 'n ' + (totalH > 0 && st.earned / totalH >= rate * 0.85 ? 'ok' : totalH > 0 ? 'warn' : '');
+  rw.textContent = d.attempts.filter(function (a) { return !a.passed; }).length;
+
+  var days = Store.byDay(7), max = Math.max.apply(null, days.map(function (x) { return x.seconds; }).concat([1]));
+  var k = document.getElementById('kpi'); k.innerHTML = '';
+  days.forEach(function (x) {
+    k.appendChild(H('div', { title: x.label + ' · ' + App.mmss(x.seconds), style: 'flex:1;display:flex;flex-direction:column;justify-content:flex-end;height:56px' },
+      [H('i', { style: 'height:' + Math.max(3, 56 * x.seconds / max) + 'px' })]));
+  });
+  document.getElementById('wk').textContent = 'this week ' + App.mmss(days.reduce(function (a, b) { return a + b.seconds; }, 0));
+
+  /* projection */
+  var adv = rate, rows = [
+    ['Advertised ceiling for this queue tier', '$' + adv + '/hr', 'what the listing says'],
+    ['Hours actually offered per week', '6–14 h', 'contributor-reported, swings hard'],
+    ['Month at the advertised rate', '$' + Math.round(adv * 40 * 4), 'never happens — this is the fantasy row'],
+    ['Realistic paid hours / month', '32 h', '14 h × 3 available weeks × 0.76'],
+    ['Gross', '$' + Math.round(adv * 32), 'before unpaid time'],
+    ['Less unpaid onboarding (one-off, amortised)', '−$' + Math.round(adv * 0.7 * 3), '3 unpaid hrs per platform × 3 platforms'],
+    ['Less rework / non-billable minutes', '−' + (st.unpaidHours > 0 ? Math.round(100 * st.unpaidHours / Math.max(st.paidHours, 0.1)) : 12) + '%', 'from your own log once you have one'],
+    ['Payout rail fees (Payoneer → local bank)', '−2 to −4%', 'plus spread on the conversion, which is the silent one'],
+    ['What people report, first 60 days', '$' + Math.round(adv * 32 * 0.62) + '–' + Math.round(adv * 32 * 0.8), 'if the queue stays open']
+  ];
+  var pb = document.getElementById('proj'); pb.innerHTML = '';
+  rows.forEach(function (r, i) {
+    pb.appendChild(H('tr', {}, [
+      H('td', { class: 'sm' + (i === 2 ? ' dim' : i === 8 ? '' : '') }, [r[0]]),
+      H('td', { class: 'mono', style: 'text-align:right;font-weight:' + (i === 8 ? '700' : '500') + ';' + (i === 2 ? 'text-decoration:line-through;opacity:.55' : '') }, [r[1]]),
+      H('td', { class: 'xs dim' }, [r[2]])
+    ]));
+  });
+
+  /* per type */
+  var by = {};
+  d.attempts.forEach(function (a) {
+    var k2 = a.type || a.task;
+    by[k2] = by[k2] || { n: 0, score: 0, sec: 0, paid: 0, ok: 0 };
+    by[k2].n++; by[k2].score += a.score; by[k2].sec += a.seconds || 0;
+    by[k2].paid += (a.passed ? (a.seconds || 0) / 3600 * (a.rate || 0) : 0);
+    if (a.passed) by[k2].ok++;
+  });
+  var tb = document.querySelector('#tt tbody'); tb.innerHTML = '';
+  Object.keys(by).forEach(function (k3) {
+    var v = by[k3];
+    var eff = v.sec > 0 ? v.paid / (v.sec / 3600) : 0;
+    tb.appendChild(H('tr', {}, [
+      H('td', { style: 'font-weight:600' }, [k3]),
+      H('td', { class: 'mono' }, [v.n + '×']),
+      H('td', { class: 'mono' }, [Math.round(v.score / v.n) + '/100']),
+      H('td', { class: 'mono dim' }, [App.mmss(v.sec)]),
+      H('td', { class: 'mono' }, [App.money(v.paid)]),
+      H('td', { class: 'mono', style: 'color:' + (eff >= (a_rate()) * 0.9 ? 'var(--ok)' : eff > 0 ? 'var(--warn)' : 'var(--bad)') }, [eff ? '$' + eff.toFixed(2) + '/hr' : '$0.00/hr']),
+      H('td', {}, [v.ok + '/' + v.n + ' accepted'])
+    ]));
+  });
+  if (!tb.children.length) tb.appendChild(H('tr', {}, [H('td', { colspan: '7', class: 'dim sm' },
+    ['Nothing graded yet. Do one task and the effective-rate column appears — that column is the only one worth watching.'])]));
+  document.getElementById('tt-n').textContent = Object.keys(by).length + ' types';
+}
+function a_rate() { var d = Store.get(); return (d.profile && d.profile.rate) || 15; }
+
+function dl() {
+  var d = Store.get();
+  var blob = new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' });
+  var a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = 'annotatetrainer-ledger-' + new Date().toISOString().slice(0, 10) + '.json'; a.click();
+}
+paint();
+</script>
+</body>
+</html>

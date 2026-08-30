@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AnnotateTrainer — practise AI-annotation assessments before you take them for money</title>
+<meta name="description" content="Practice sandbox for AI trainer / data annotation marketplaces: pick a platform, learn its funnel, then run timed assessments with rubric grading and an explainable AI-tells detector.">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div id="app-banner"></div>
+
+<header class="top">
+  <div class="brand"><span class="logo">A</span>
+    <div>AnnotateTrainer<small>assessment simulator</small></div>
+  </div>
+  <nav class="nav">
+    <a href="platforms.html">Platforms</a>
+    <a href="onboarding.html">Start assessment</a>
+    <a href="detector.html">AI-tells detector</a>
+    <a href="guide.html">Free guide</a>
+    <a href="queue.html">Task queue</a>
+    <a href="buy.html" style="color:#cfc7ff">Buy access</a>
+  </nav>
+</header>
+
+<section class="hero">
+  <div class="lede">◆ Pick a platform, learn its funnel free · graded practice behind a key · nothing leaves your browser</div>
+  <h1>The assessment they give you is the job you don't get paid for.</h1>
+  <p class="sub">Most AI-training marketplaces screen you with 2–5 hours of unpaid tasks — response ranking,
+  rubric writing, reasoning-trace review, an AI-use detector — then reject roughly 4 in 5 applicants with a
+  template email. Here is that assessment, with the grading rules shown open, so the first one you take for
+  real is not the one you learn on.</p>
+  <div class="row" style="margin-top:26px">
+    <a class="btn big" href="platforms.html">Pick your platform</a>
+    <a class="btn big ghost" href="guide.html">Read the free guide first</a>
+    <a class="btn big ghost" href="buy.html">Buy access</a>
+  </div>
+  <p class="xs dim" style="margin-top:16px">Start with the platform you actually applied to — the funnel, the traps and the practice set differ by vendor. Time invested here is tracked as <b>unpaid</b> in your ledger. That's the point.</p>
+</section>
+
+<div class="wrap">
+  <div class="grid g3" style="margin:36px 0 44px">
+    <div class="card">
+      <div class="up">Step 1 · 20 min</div>
+      <h3 style="margin-top:8px">Timed qualification</h3>
+      <p class="sm dim mb0">Four sections, one clock, no retakes on some platforms and none here either.
+      Scored against a stated threshold so you know exactly what "80% reasoning test" means.</p>
+    </div>
+    <div class="card">
+      <div class="up">Step 2 · open queue</div>
+      <h3 style="margin-top:8px">Seven real task types</h3>
+      <p class="sm dim mb0">RLHF ranking, grounded writing, three-way fact-checking, process-reward
+      error-spotting, code review, red-team prompt + report, search relevance. Each graded on its rubric,
+      with the consensus answer revealed after submit.</p>
+    </div>
+    <div class="card">
+      <div class="up">Step 3 · anytime</div>
+      <h3 style="margin-top:8px">AI-tells detector</h3>
+      <p class="sm dim mb0">Paste a draft, see the five features it measures — burstiness, vocabulary
+      spread, first-person density, bullet scaffolding, boilerplate phrasing — with the maths visible.
+      Not a verdict. A mirror.</p>
+    </div>
+  </div>
+
+  <div class="grid g2" style="align-items:start">
+    <div class="card">
+      <h2>What is real here, and what isn't</h2>
+      <p class="sm">The <b>task formats, rubrics and failure modes are modelled on how these queues actually
+      score you</b> — pairwise agreement instead of a single right answer, precision weighted against recall,
+      "first erroneous step" traps, and hidden integrity probes. The <b>client, brief, dollar rates and
+      queue names are fictional</b>, deliberately: this is not an Outlier clone, not a Handshake AI clone,
+      not a vendor portal, and nothing here is a credential or proof of vetting.</p>
+      <p class="sm mb0">If anyone shows you a site like this and asks for money — for "activation",
+      "ID verification", a "US location", or a training course — that's the scam. Real platforms never
+      charge you. <a href="guide.html#scams">Full red-flag list →</a></p>
+    </div>
+    <div class="card">
+      <h2>Numbers from the real market</h2>
+      <table>
+        <tbody>
+        <tr><td>Typical generalist rate, actual accepted work</td><td class="mono" style="text-align:right">$15–25/hr</td></tr>
+        <tr><td>Coding / STEM queues</td><td class="mono" style="text-align:right">$25–45/hr</td></tr>
+        <tr><td>Credentialed (MD / JD / PhD) queues</td><td class="mono" style="text-align:right">$40–125/hr</td></tr>
+        <tr><td>Unpaid onboarding + assessment</td><td class="mono" style="text-align:right">2–5 hrs</td></tr>
+        <tr><td>Assessment retakes allowed</td><td class="mono" style="text-align:right">often zero</td></tr>
+        <tr><td>Applicants who reach a paid queue</td><td class="mono" style="text-align:right">~1 in 5</td></tr>
+        <tr><td>Contributors reporting a sudden ban with held balance</td><td class="mono" style="text-align:right">common enough to plan for</td></tr>
+        </tbody>
+      </table>
+      <p class="xs dim mb0">Ranges are from public rate bands and contributor reports compiled in
+      <a href="guide.html">the guide</a>. They move constantly. Treat every number as a starting
+      guess, including these.</p>
+    </div>
+  </div>
+
+  <div class="footnote">
+    AnnotateTrainer is an independent learning tool. It is not affiliated with, endorsed by, or
+    connected to any AI-training marketplace, and it does not represent one. No data leaves your
+    browser unless you run the optional local server. <a href="index.html#how">How it grades you →</a>
+  </div>
+</div>
+
+<script src="js/storage.js"></script>
+<script src="js/detector.js"></script>
+<script src="js/tasks.js"></script>
+<script src="js/app.js"></script>
+<script>App.banner();</script>
+</body>
+</html>

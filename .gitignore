@@ -1,0 +1,5 @@
+# buyer data + the signing secret: never commit these
+data/
+assets/*.png
+.DS_Store
+*.log

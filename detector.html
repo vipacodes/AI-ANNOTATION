@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI-tells detector — AnnotateTrainer</title>
+<link rel="stylesheet" href="css/app.css">
+<script>/* pre-paint lock: never flash protected content */(function(){var k="";try{k=localStorage.getItem("at_key")||""}catch(e){}var okk=/^[A-Za-z0-9]{6,10}\.[A-Za-z0-9_\-]{20,}\.[0-9]{10,13}$/.test(k)&&Number(String(k).split(".")[2])>=Date.now();if(!okk)document.write('<style>body[data-gated]>div{display:none!important}</style>')})();</script>
+</head>
+<body data-gated>
+<div id="app-banner"></div>
+<div class="shell"><main class="main">
+  <div class="up">Tool</div>
+  <h1 style="font-size:26px">AI-tells detector</h1>
+
+  <div class="alert bad">
+    <span class="ic">⚠</span>
+    <div><b>This is a mirror, not a verdict.</b> It measures five surface features of text. It is not a model
+    classifier, it cannot see how a text was produced, and it will be wrong often. Short text, translated text and
+    writing by non-native English speakers all score badly here for reasons unrelated to how they were written —
+    which is exactly why human-feedback platforms get false-positive accusations from their own tooling.<br>
+    <b>Run it on your own drafts, to learn which habits read as templated. Never run it on another person's work
+    to accuse or screen them.</b></div>
+  </div>
+
+  <div class="split">
+    <div class="panelbox">
+      <header><span>Draft</span><span class="chip" id="wc">0 words</span></header>
+      <div class="body">
+        <textarea id="ta" rows="14" placeholder="Paste your draft response here — a ranking justification, a written answer, anything you would submit to a queue."></textarea>
+        <div class="row" style="margin-top:12px">
+          <button class="btn ghost sm" data-sample="templated">Load a templated answer</button>
+          <button class="btn ghost sm" data-sample="human">Load the same answer, rewritten</button>
+          <button class="btn ghost sm" data-sample="flagged">Load a rejected review note</button>
+          <button class="btn sm" onclick="run()">Analyse</button>
+          <button class="btn ghost sm" onclick="document.getElementById('ta').value='';run()">Clear</button>
+        </div>
+      </div>
+    </div>
+    <div>
+      <div class="panelbox">
+        <header><span>Authenticity index</span><span class="chip" id="band">—</span></header>
+        <div class="body" id="gaugebox">
+          <div class="row" style="align-items:center;gap:16px">
+            <svg class="gauge" viewBox="0 0 200 118" style="width:172px;height:auto">
+              <path d="M18 106 A 82 82 0 1 1 182 106" fill="none" stroke="#1c2431" stroke-width="15" stroke-linecap="round"/>
+              <path id="arc" d="M18 106 A 82 82 0 1 1 182 106" fill="none" stroke="#8b7cff" stroke-width="15"
+                    stroke-linecap="round" stroke-dasharray="257.6" stroke-dashoffset="257.6" style="transition:stroke-dashoffset .7s cubic-bezier(.2,.8,.2,1),stroke .4s"/>
+            </svg>
+            <div>
+              <div class="gauge-num" id="num">—</div>
+              <div class="xs dim" id="readout">Waiting for input. Every feature and its weight is shown below so you can see how the number is built.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="panelbox" style="margin-top:14px">
+        <header><span>Features measured</span><span class="chip violet">weights visible</span></header>
+        <div class="body" id="feats"><p class="sm dim mb0">Run an analysis to see the five features, their raw values, and the score each one contributes.</p></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid g2" style="margin-top:18px;align-items:start">
+    <div class="card">
+      <h3>What the flags mean</h3>
+      <div id="tips"><p class="sm dim mb0">Nothing to say yet.</p></div>
+    </div>
+    <div class="card">
+      <h3>The tells bank</h3>
+      <p class="sm dim">These are the phrases reviewers on contributor forums complain about, plus the ones
+      that show up in every "how to avoid detection" thread. Density here is what moves the score most.</p>
+      <div class="row" style="gap:5px" id="cliche"></div>
+      <p class="xs dim" style="margin:14px 0 0">Counter-intuitive fact worth knowing: <b>removing all of these and
+      writing nothing else makes you look MORE automated, not less.</b> Model output is detected by its evenness —
+      uniform sentence length, no first person, no specifics — not by vocabulary. The fix is adding
+      idiosyncrasy: an odd detail, a number only you would have, a short sentence next to a long one.</p>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:18px">
+    <h3>Drill: rewrite until it clears 68</h3>
+    <p class="sm dim">Take the templated sample, rewrite it in your own voice, and watch which of the five features
+    you can move. This is the exercise, not the score — a reviewer who can explain <i>why</i> a paragraph reads
+    like boilerplate will outperform one who has memorised a banned-word list.</p>
+    <div class="row">
+      <button class="btn ghost sm" onclick="document.getElementById('ta').value=SAMPLES.templated;run()">Reset to the templated version</button>
+      <a class="btn ghost sm" href="task.html?id=write-policy-01">Practise the writing task instead →</a>
+    </div>
+  </div>
+</main></div>
+
+<script src="js/storage.js"></script>
+<script src="js/access.js"></script>
+<script src="js/detector.js"></script>
+<script src="js/tasks.js"></script>
+<script src="js/app.js"></script>
+<script>
+App.shell('detector');
+var H = App.h;
+var SAMPLES = {
+  templated:
+    "In today's fast-paced gig economy, AI training platforms offer a flexible and robust way to earn additional income from the comfort of your own home. It is important to note that pay rates can vary significantly depending on the platform, your level of expertise, and the current demand for skilled contributors.\n\n" +
+    "- **Competitive rates:** Many platforms offer competitive hourly rates that can be leveraged to build a steady stream of income.\n" +
+    "- **Flexibility:** The ability to work on your own schedule is a testament to the ever-evolving nature of remote work, allowing contributors to foster a healthier work-life balance.\n" +
+    "- **Growth opportunities:** Furthermore, contributors can navigate the landscape of emerging technologies, cultivating valuable skills that showcase their adaptability.\n\n" +
+    "Additionally, it is worth noting that individuals should carefully evaluate their options and leverage reputable payment solutions. Moreover, by adopting a holistic approach and remaining diligent, one can unlock a rewarding experience. In conclusion, with dedication and the right mindset, you can embark on a seamless journey toward financial empowerment.",
+  human:
+    "I did about 40 hours across two platforms in June and got paid $612, so call it $15 an hour before the fees. That is per hour logged, not per week, which took me embarrassingly long to figure out — I read a screenshot of a weekly payout and just assumed.\n\n" +
+    "Getting the money into a Nigerian bank was the actual puzzle. One platform pushed me to Payoneer, which landed in my GTBank USD account four days later at a rate I did not love. The other paid PayPal, and PayPal still would not send me anything usable without a workaround, so I stopped taking those projects.\n\n" +
+    "The thing nobody warns you about: two of those 40 hours were the qualification test, and nobody pays for those. When my queue went quiet for nine days in the middle, my effective rate was a lot worse than $15.",
+  flagged:
+    "The response is high quality and follows the guideline. It provides relevant information. It uses a professional tone. " +
+    "It should not have been rejected. The response was checked twice. Each check found it satisfactory. The response is robust. " +
+    "The response is accurate. The response is helpful. The response is clear. Moreover the response is well structured. " +
+    "Furthermore it is important to note that no errors were found. The reviewer may be mistaken. Overall the response is good.",
+};
+
+document.getElementById('ta').addEventListener('input', function () {
+  document.getElementById('wc').textContent = (this.value.trim().match(/\S+/g) || []).length + ' words';
+});
+[].forEach.call(document.querySelectorAll('[data-sample]'), function (b) {
+  b.onclick = function () { document.getElementById('ta').value = SAMPLES[b.dataset.sample]; run(); };
+});
+
+function run() {
+  var txt = document.getElementById('ta').value;
+  var r = Detector.analyze(txt);
+  var C = 257.6;
+  var arc = document.getElementById('arc');
+  arc.style.strokeDashoffset = String(C - C * (r.index / 100));
+  arc.style.stroke = r.index >= 68 ? '#39d98a' : r.index >= 45 ? '#f5b13d' : '#ff5f6d';
+  document.getElementById('num').textContent = r.index;
+  document.getElementById('band').textContent = r.bandLabel;
+  document.getElementById('band').className = 'chip ' + (r.index >= 68 ? 'ok' : r.index >= 45 ? 'warn' : 'bad');
+  document.getElementById('readout').innerHTML = r.counts.words + ' words · ' + r.counts.sentences +
+    ' sentences · em-dashes ' + r.em + '. ' + (r.counts.words < 40
+      ? '<b>Too short to judge</b> — the number is pulled toward neutral on purpose.'
+      : (r.index >= 68 ? 'This reads like a specific person wrote it.' : r.index >= 45 ? 'Half of your features read human, half read boilerplate.' : 'This is what an automated first pass flags.'));
+
+  var f = document.getElementById('feats'); f.innerHTML = '';
+  r.features.forEach(function (x) {
+    var col = x.score >= 65 ? '#39d98a' : x.score >= 40 ? '#f5b13d' : '#ff5f6d';
+    f.appendChild(H('div', { class: 'feat' }, [
+      H('div', {}, [H('div', { class: 'nm' }, [x.k]), H('div', { class: 'xs dim', style: 'width:170px' }, [x.hint])]),
+      H('div', { class: 'bar' }, [H('i', { style: 'width:' + x.score + '%;background:' + col })]),
+      H('div', { class: 'val', style: 'color:' + col }, [x.score + '']),
+      H('div', { class: 'val', style: 'width:132px;color:var(--dim2)' }, [x.v])
+    ]));
+  });
+  f.appendChild(H('div', { class: 'xs dim', style: 'margin-top:10px' },
+    ['index = ' + Object.keys(r.weights).map(function (k) { return k + '×' + r.weights[k]; }).join(' + ') +
+     ' → weighted sum of the five scores above. No hidden model.']));
+
+  var t = document.getElementById('tips'); t.innerHTML = '';
+  if (!r.tips.length && r.counts.words >= 40) t.appendChild(H('p', { class: 'sm' }, ['No structural complaints. That is the target state — not "no flagged words", but text where the unevenness and the specifics are yours.']));
+  r.tips.forEach(function (x) { t.appendChild(H('div', { class: 'alert warn', style: 'margin-bottom:8px' }, [H('span', { class: 'ic', html: '→' }), H('div', {}, [x])])); });
+  if (r.hits.length) t.appendChild(H('div', { class: 'row', style: 'gap:5px;margin-top:10px' },
+    [H('span', { class: 'up', style: 'width:100%' }, ['phrase hits'])].concat(r.hits.slice(0, 14).map(function (x) {
+      return H('span', { class: 'chip bad' }, [x.w + ' ×' + x.n]);
+    }))));
+  Store.log('detector run → index ' + r.index);
+}
+
+document.getElementById('cliche').innerHTML = '';
+Detector.CLICHE.slice(0, 30).forEach(function (w) {
+  document.getElementById('cliche').appendChild(H('span', { class: 'chip' }, [w]));
+});
+run();
+</script>
+</body>
+</html>

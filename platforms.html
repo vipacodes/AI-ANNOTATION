@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Choose a platform to learn — AnnotateTrainer</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div id="app-banner"></div>
+<div class="shell"><main class="main">
+  <div class="row between" style="margin-bottom:6px">
+    <div><div class="up">Pick your target</div><h1 style="font-size:26px">Twelve platforms, twelve ways to fail the same assessment</h1></div>
+    <div class="row" style="gap:6px"><span class="chip" id="count">12</span><span class="chip violet">practice sets included</span></div>
+  </div>
+  <p class="sm dim" style="max-width:78ch">Each profile below is a reconstruction from public rate bands, vendor
+  documentation and contributor reports: the funnel you'll actually walk, the gate that stops most people, the task
+  shapes, the payout rail and the specific things that get contributors restricted. Then a practice set built to
+  resemble that platform's work, graded against a rubric, with the consensus answer revealed after you submit.
+  <b>No affiliation, no logos, no vendor assets</b> — this is a study tool, not the real portal.</p>
+
+  <div class="row" style="margin:18px 0 14px;gap:7px" id="filters">
+    <input id="q" placeholder="filter by name, language, domain… (try 'code', 'yoruba', 'phd')" style="max-width:340px">
+    <span class="chip" data-f="all" style="cursor:pointer">all</span>
+    <span class="chip" data-f="open" style="cursor:pointer;cursor:pointer">open to Nigeria</span>
+    <span class="chip" data-f="expert" style="cursor:pointer">credentialed only</span>
+    <span class="chip" data-f="nogate" style="cursor:pointer">no assessment needed</span>
+    <span class="chip" data-f="quick" style="cursor:pointer">start this week</span>
+  </div>
+
+  <div class="grid g3" id="cards"></div>
+
+  <div class="card" style="margin-top:20px">
+    <h3>How to use this page</h3>
+    <div class="grid g3" style="gap:16px">
+      <div><div class="up">1 · match yourself</div><p class="sm dim mb0">Pick by the <b>gate</b>, not the rate. A
+        $120/hr credential-gated queue is worthless to you if you can't clear the credential step. Pick the
+        highest-paying gate you can actually pass today.</p></div>
+      <div><div class="up">2 · rehearse that shape</div><p class="sm dim mb0">Every practice set is the task
+        <i>format</i> of that platform, not its content. Ranking sets, golden answers, rubric grading, code
+        review, guideline rating — the mechanics transfer, the answers do not.</p></div>
+      <div><div class="up">3 · then go be boring</div><p class="sm dim mb0">Apply to two of these, not five. Pass
+        one assessment properly, keep the other as your fallback queue. Then log your hours in
+        <a href="earnings.html">the ledger</a> so you know your real rate by week three.</p></div>
+    </div>
+  </div>
+
+  <div class="footnote" id="asof">Rate and eligibility data are figures as of mid-2026 and change without notice. Before applying,
+  verify on the platform's own site — every card links to it. If any card and the real page disagree, the real page wins.</div>
+</main></div>
+
+<script src="js/storage.js"></script>
+<script src="js/tasks.js"></script>
+<script src="js/platforms.js"></script>
+<script src="js/mockups.js"></script>
+<script src="js/app.js"></script>
+<script>
+App.shell('platforms');
+var H = App.h, st = Store.stats();
+
+function tag(p) {
+  var t = [];
+  if (p.nigeria.status.indexOf('open') >= 0 || p.nigeria.status.indexOf('global') >= 0 || p.nigeria.status.indexOf('genuinely') >= 0) t.push('open');
+  if (p.gates.join(' ').toLowerCase().indexOf('credential') >= 0 || p.gates.join(' ').toLowerCase().indexOf('degree') >= 0) t.push('expert');
+  if (p.id === 'mindrift' || p.id === 'toloka' || p.id === 'prolific') t.push('nogate');
+  if (p.id === 'mindrift' || p.id === 'toloka' || p.id === 'rws' || p.id === 'appen' || p.id === 'pareto' || p.id === 'prolific') t.push('quick');
+  t.push(p.name.toLowerCase()); t.push(p.operator.toLowerCase()); t.push(p.tier.toLowerCase());
+  t.push(p.tasks.join(' ').toLowerCase());
+  return t.join(' | ');
+}
+
+function render() {
+  var q = (document.getElementById('q').value || '').toLowerCase();
+  var f = (document.querySelector('#filters .chip.on') || {}).dataset;
+  f = f && f.f !== 'all' ? f.f : null;
+  var list = Platforms.all.filter(function (p) {
+    var hay = tag(p) + ' ' + p.blurb.toLowerCase() + ' ' + p.nigeria.note.toLowerCase();
+    if (q && hay.indexOf(q) < 0) return false;
+    if (f && tag(p).indexOf(f) < 0) return false;
+    return true;
+  });
+  document.getElementById('count').textContent = list.length + ' shown';
+  var box = document.getElementById('cards'); box.innerHTML = '';
+  if (!list.length) { box.appendChild(H('div', { class: 'card dim' }, ['No profile matches that. Try "code", "writing", "language", "phd" or clear the filter.'])); return; }
+  list.forEach(function (p) {
+    var done = (st.onboarding && st.onboarding.passed) ? 'assessment cleared' : null;
+    var card = H('div', { class: 'card reveal', style: 'display:flex;flex-direction:column;gap:12px;border-top:3px solid ' + p.accent }, [
+      H('div', { class: 'row between' }, [
+        H('div', { class: 'row', style: 'gap:10px' }, [
+          H('span', { style: 'width:30px;height:30px;border-radius:8px;display:grid;place-items:center;font-weight:900;color:#0b0d12;background:' + p.accent, class: 'mono' }, [p.short]),
+          H('div', {}, [H('div', { style: 'font-weight:700;font-size:15.5px' }, [p.name]),
+            H('div', { class: 'xs dim' }, [p.operator])])
+        ]),
+        H('span', { class: 'chip' }, [p.tier])
+      ]),
+      H('p', { class: 'sm dim mb0', style: 'min-height:66px' }, [p.blurb]),
+      H('div', { class: 'grid', style: 'gap:7px;font-size:12.5px' }, [
+        kv('Advertised', p.rates.advertised),
+        kv('What people earn', p.rates.actual),
+        kv('Nigeria', p.nigeria.status, p.nigeria.status.indexOf('open') >= 0 || p.nigeria.status.indexOf('global') >= 0 ? 'var(--ok)' : p.nigeria.status.indexOf('no') === 0 || p.nigeria.status.indexOf('closed') >= 0 || p.nigeria.status.indexOf('unavailable') >= 0 ? 'var(--bad)' : 'var(--warn)')
+      ]),
+      H('div', { class: 'row', style: 'gap:5px' }, p.tasks.slice(0, 3).map(function (t) { return H('span', { class: 'chip' }, [t]); })
+        .concat([H('span', { class: 'chip dim2' }, ['+' + (p.tasks.length - 3)])])),
+      H('div', { class: 'row between', style: 'margin-top:auto;padding-top:6px' }, [
+        H('span', { class: 'xs dim mono' }, [p.preset.length + ' practice tasks']),
+        H('div', { class: 'row', style: 'gap:6px' }, [
+          H('a', { class: 'btn ghost sm', href: 'platform.html?p=' + p.id }, ['Full profile']),
+          H('a', { class: 'btn sm', href: 'queue.html?p=' + p.id }, ['Practise →'])
+        ])
+      ])
+    ]);
+    box.appendChild(card);
+  });
+  function kv(k, v, c) {
+    return H('div', { class: 'row between', style: 'gap:12px' }, [
+      H('span', { class: 'xs dim', style: 'flex:none;width:110px' }, [k]),
+      H('span', { style: 'text-align:right;color:' + (c || 'inherit'), class: c ? 'xs' : 'xs dim' }, [v])
+    ]);
+  }
+}
+[].forEach.call(document.querySelectorAll('#filters .chip'), function (c) {
+  c.onclick = function () {
+    var on = c.classList.contains('on');
+    [].forEach.call(document.querySelectorAll('#filters .chip'), function (x) { x.classList.remove('on'); });
+    if (!on) c.classList.add('on');
+    render();
+  };
+});
+document.getElementById('q').addEventListener('input', render);
+if (window.Mockups && window.Mockups.for) {
+  document.getElementById('cards').dataset.mockups = 'ready';
+}
+render();
+</script>
+</body>
+</html>

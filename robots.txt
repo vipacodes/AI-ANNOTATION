@@ -1,0 +1,20 @@
+# Free to index: the front door, the platform catalogue, the guide, the paywall pages.
+# The graded corpus and the practice workspace are deliberately kept out of search results.
+User-agent: *
+Allow: /index.html
+Allow: /platforms.html
+Allow: /platform.html
+Allow: /guide.html
+Allow: /gate.html
+Allow: /buy.html
+Disallow: /task.html
+Disallow: /queue.html
+Disallow: /onboarding.html
+Disallow: /detector.html
+Disallow: /trust-safety.html
+Disallow: /earnings.html
+Disallow: /js/tasks.js
+Disallow: /js/detector.js
+Disallow: /js/mockups.js
+Disallow: /data/
+Disallow: /api/submit

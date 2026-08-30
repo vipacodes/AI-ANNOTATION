@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Task queue — AnnotateTrainer</title>
+<link rel="stylesheet" href="css/app.css">
+<script>/* pre-paint lock: never flash protected content */(function(){var k="";try{k=localStorage.getItem("at_key")||""}catch(e){}var okk=/^[A-Za-z0-9]{6,10}\.[A-Za-z0-9_\-]{20,}\.[0-9]{10,13}$/.test(k)&&Number(String(k).split(".")[2])>=Date.now();if(!okk)document.write('<style>body[data-gated]>div{display:none!important}</style>')})();</script>
+</head>
+<body data-gated>
+<div id="app-banner"></div>
+<div class="shell"><main class="main">
+  <div class="row between" style="margin-bottom:4px">
+    <div><div class="up">Step 2 · billable</div><h1 style="font-size:26px">Task queue</h1></div>
+    <div class="row" style="gap:8px"><span class="chip ok" id="qs">QS —</span><span class="chip" id="done">0 graded</span><span id="plat-slot" class="row" style="gap:6px;align-items:center"></span></div>
+  </div>
+  <p class="sm dim" style="max-width:72ch">Seven task types that cover most of what these marketplaces route to
+  humans. Every brief, prompt and dollar rate below is fictional; the rubric each one is scored on is not.
+  Grading is mechanical and shown to you after submit, because here the goal is the feedback, not the payout.</p>
+
+  <div class="grid g4" style="margin:18px 0">
+    <div class="stat"><div class="l">Tasks graded</div><div class="n" id="s1">0</div></div>
+    <div class="stat"><div class="l">Mean rubric score</div><div class="n" id="s2">—</div></div>
+    <div class="stat"><div class="l">Billable hours</div><div class="n" id="s3">0.00</div></div>
+    <div class="stat"><div class="l">Integrity flags</div><div class="n" id="s4">0</div></div>
+  </div>
+
+  <div class="panelbox">
+    <header><span>Available</span><span class="chip" id="queue-state">open</span></header>
+    <div class="body" style="padding:0"><table id="tbl"><tbody></tbody></table></div>
+  </div>
+
+  <div class="grid g2" style="margin-top:18px">
+    <div class="card">
+      <h3>Why one row is missing</h3>
+      <p class="sm dim mb0">Queues hide and surface items per contributor based on your score history. There is a
+      hidden probe in this corpus — it appears once you have cleared two tasks, and it does not say what it is
+      until you submit. That is exactly how the real ones work: the item that decides whether you keep access
+      often looks like the most boring one on the board. <a href="trust-safety.html">Read the mechanics →</a></p>
+    </div>
+    <div class="card">
+      <h3>Reading a rate before you accept</h3>
+      <p class="sm dim mb0">$12/hr search rating with an unlimited clock and $40/hr red-teaming with a 45-second
+      timer are not the same job. Effective rate = (rubric score ÷ time actually spent) × your rate, adjusted for
+      the rework loop every sub-70 item puts you through. The earnings page computes this per task so you can see
+      which task types are quietly costing you money.</p>
+    </div>
+  </div>
+</main></div>
+
+<script src="js/storage.js"></script>
+<script src="js/access.js"></script>
+<script src="js/tasks.js"></script>
+<script src="js/platforms.js"></script>
+<script src="js/app.js"></script>
+<script>
+App.shell('queue');
+
+/* ---- platform filter: ?p=<id> (set by the platform page) narrows the queue to that
+        vendor's practice preset, because each platform routes a different mix ---- */
+var QP = new URLSearchParams(location.search).get('p') || sessionStorage.getItem('at.platform') || '';
+if (QP && window.Platforms && Platforms.get(QP)) {
+  try { sessionStorage.setItem('at.platform', QP); } catch (e) { }
+} else { QP = ''; }
+var PLAT = QP ? Platforms.get(QP) : null;
+var PRESET = PLAT ? Platforms.tasksFor(PLAT.id).map(function (t) { return t.id; }) : null;
+(function paintHeader() {
+  var slot = document.getElementById('plat-slot');
+  if (!slot) return;
+  if (PLAT) {
+    var open = 0, hid = 0;
+    Tasks.list(true).forEach(function (t) { if (PRESET.indexOf(t.id) < 0) return; if (t.hidden) hid++; else open++; });
+    slot.innerHTML = '<span class="chip" style="border-color:' + PLAT.accent + ';color:#e9e6ff">◈ ' +
+      App.esc(PLAT.name) + ' queue · ' + open + ' open' + (hid ? ' · ' + hid + ' targeted item still hidden' : '') + '</span>';
+    var clr = document.createElement('a');
+    clr.href = 'queue.html'; clr.className = 'xs'; clr.style.cssText = 'color:#8b7cff;margin-left:8px';
+    clr.textContent = 'show all task types'; slot.appendChild(clr);
+  } else {
+    slot.innerHTML = '<a href="platforms.html" class="xs" style="color:#8b7cff">filter by platform →</a>';
+  }
+})();
+
+function paint() {
+  var st = Store.stats(), d = Store.get();
+  document.getElementById('qs').textContent = 'QS ' + (st.qualityScore === null ? '—' : st.qualityScore);
+  document.getElementById('qs').className = 'chip ' + (st.qualityScore >= 85 ? 'ok' : st.qualityScore === null ? '' : st.qualityScore >= 65 ? 'warn' : 'bad');
+  document.getElementById('done').textContent = st.tasks + ' graded';
+  s1.textContent = st.tasks; s2.textContent = st.avgScore === null ? '—' : st.avgScore;
+  s3.textContent = st.paidHours.toFixed(2); s4.textContent = st.flags.length;
+  s3.className = 'n' + (st.paidHours > 0 ? ' ok' : '');
+  s4.className = 'n' + (st.flags.length ? ' bad' : '');
+
+  var doneIds = {}; d.attempts.forEach(function (a) { if (a.passed) doneIds[a.task] = (doneIds[a.task] || 0) + 1; });
+  var unlockProbe = st.tasks >= 2;
+  var tb = document.querySelector('#tbl tbody'); tb.innerHTML = '';
+
+  Tasks.list(!unlockProbe ? false : true).forEach(function (t) {
+    if (t.hidden && !unlockProbe) return;
+    if (PRESET && PRESET.indexOf(t.id) < 0) return;
+    if (t.hidden) document.getElementById('queue-state').textContent = '1 targeted item';
+    var tr = App.h('tr', {}, [
+      App.h('td', {}, [
+        App.h('div', { style: 'font-weight:650' }, [t.title.replace(/ \(quick pair rating/, '')]),
+        App.h('div', { class: 'xs dim mono' }, [t.project + ' · ' + t.id])
+      ]),
+      App.h('td', {}, t.skills.map(function (s) { return App.h('span', { class: 'chip', style: 'margin:0 4px 4px 0;display:inline-flex' }, [s]); })),
+      App.h('td', { class: 'mono' }, [App.h('b', {}, ['$' + t.rate]), App.h('div', { class: 'xs dim' }, ['/hr'])]),
+      App.h('td', { class: 'mono dim' }, [t.minutes + ' min']),
+      App.h('td', {}, [doneIds[t.id] ? App.h('span', { class: 'chip ok' }, ['✓ ' + doneIds[t.id] + '× accepted']) : App.h('span', { class: 'chip' }, ['ungraded'])]),
+      App.h('td', { style: 'text-align:right' }, [App.h('a', { class: 'btn sm' + (t.hidden ? ' bad' : ''), href: 'task.html?id=' + t.id + (QP ? '&p=' + QP : '') },
+        [t.hidden ? 'Open item' : 'Accept →'])])
+    ]);
+    tb.appendChild(tr);
+  });
+  if (!tb.children.length) {
+    tb.appendChild(App.h('tr', {}, [App.h('td', { colspan: '6', class: 'dim' },
+      [PLAT ? 'This platform\u2019s preset has no match in the local corpus yet \u2014 ' : 'Queue empty. ',
+       App.h('a', { href: 'queue.html' }, ['show every task type']).outerHTML].join(''))]));
+  }
+}
+paint();
+</script>
+</body>
+</html>

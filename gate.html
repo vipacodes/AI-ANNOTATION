@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Unlock AnnotateTrainer</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div class="wrap" style="padding-top:60px;max-width:560px">
+  <div class="card" style="padding:30px">
+    <div class="row" style="gap:10px;margin-bottom:16px">
+      <span class="logo" style="width:30px;height:30px;border-radius:8px;background:conic-gradient(from 200deg,#8b7cff,#4cc9f0,#8b7cff);display:grid;place-items:center;color:#0b0d12;font-weight:900">A</span>
+      <b>AnnotateTrainer</b>
+    </div>
+    <h1 style="font-size:24px">Enter your access key</h1>
+    <p class="sm dim">Keys are issued right after payment and look like
+    <code>Ab3xK9.7W7KqRmYs0dYbE6fLrT1cPp0.1790000000000</code> — an id, a signature, an expiry.
+    One key per person, valid for the period you bought. Paste it here once and the site remembers you for
+    that long.</p>
+    <div class="row" style="margin:18px 0 8px">
+      <input id="k" placeholder="paste key" style="flex:1;font-family:var(--mono);font-size:13px">
+      <button class="btn" id="go">Unlock</button>
+    </div>
+    <div id="m" class="xs" style="min-height:20px;color:var(--dim)"></div>
+    <div class="hr"></div>
+    <p class="xs dim mb0">Lost the key? Reply to your purchase receipt — the key is tied to the label on it, so I can
+    reissue it. If you were told you need to "verify your identity" or pay an activation fee to get a key, that is not
+    me: no legitimate seller in this industry asks for ID documents or extra fees at the gate.</p>
+  </div>
+  <div class="row" style="gap:14px;margin-top:14px;justify-content:center">
+    <a href="buy.html" class="sm" style="color:#8b7cff">No key yet? See pricing →</a>
+    <a href="platforms.html" class="sm dim">Platform catalogue is free</a>
+    <a href="guide.html" class="sm dim">Free guide</a>
+  </div>
+</div>
+<script src="js/access.js"></script>
+<script>
+var go = function () {
+  var m = document.getElementById('m'); m.textContent = 'checking…'; m.style.color = 'var(--dim)';
+  Access.unlock(document.getElementById('k').value, function (ok, msg) {
+    m.textContent = msg; m.style.color = ok ? 'var(--ok)' : 'var(--bad)';
+    if (ok) setTimeout(function () { location.href = 'index.html'; }, 800);
+  });
+};
+document.getElementById('go').onclick = go;
+document.getElementById('k').addEventListener('keydown', function (e) { if (e.key === 'Enter') go(); });
+</script>
+</body>
+</html>

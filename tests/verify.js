@@ -1,0 +1,561 @@
+/* Headless verification: loads each page in jsdom (serving local assets off disk),
+   runs its real scripts, drives the actual UI, asserts on graded output. */
+const fs = require('fs');
+const path = require('path');
+const { JSDOM, VirtualConsole, requestInterceptor } = (function(){try{return require('jsdom')}catch(e){return require('/home/user/.testdeps/node_modules/jsdom')}})();
+const ROOT = require('path').join(__dirname, '..');
+const CASES = require(__dirname + '/cases.js');
+
+let fails = [];
+const ok = (m) => console.log('   \u2713 ' + m);
+const bad = (m) => { fails.push(m); console.log('   \u2717 ' + m); };
+const txt = (el) => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
+const clickText = (doc, sel, needle) =>
+  [...doc.querySelectorAll(sel)].find((e) => txt(e).includes(needle));
+
+const MIME = { '.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html' };
+/* serve every relative asset straight off disk so <script src> resolves without a network */
+const serveLocal = requestInterceptor((request) => {
+  const rel = decodeURIComponent(request.url.replace(/^https?:\/\/[^/]+\//, '').split('?')[0]);
+  const file = path.join(ROOT, rel);
+  /* the paywall endpoints, faked so page-level lock/unlock is testable headless */
+  if (rel === 'session') {
+    const cookie = request.headers.get('cookie') || '';
+    const ck = (cookie.match(/at_key=([^;]+)/) || [])[1] ? decodeURIComponent(RegExp.$1) : '';
+    const live = ck.indexOf('TESTKEY01.') === 0 && Number(ck.split('.')[2]) >= Date.now();
+    if (live) {
+      return new Response(JSON.stringify({ label: 'test buyer', until: '2099-01-01' }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    return new Response(JSON.stringify({ error: 'Missing key.' }), { status: 402, headers: { 'content-type': 'application/json' } });
+  }
+  if (rel === 'unlock') {
+    const sent = request.headers.get('x-test-key') || '';
+    if (sent.indexOf('TESTKEY01.') !== 0) {
+      return new Response(JSON.stringify({ error: 'This key was not issued by this site.' }), { status: 402, headers: { 'content-type': 'application/json' } });
+    }
+    return new Response(JSON.stringify({ label: 'test buyer', until: '2099-01-01' }), { status: 200, headers: { 'content-type': 'application/json' } });
+  }
+  if (!fs.existsSync(file) || !fs.statSync(file).isFile()) return new Response('', { status: 404 });
+  return new Response(fs.readFileSync(file), { headers: { 'content-type': MIME[path.extname(file)] || 'text/plain' } });
+});
+
+function load(url) {
+  const html = fs.readFileSync(path.join(ROOT, url.split('?')[0]), 'utf8');
+  const vc = new VirtualConsole();
+  const errs = [];
+  vc.on('jsdomError', (e) => errs.push('jsdomError: ' + (e.message || e)));
+  vc.on('error', (...a) => errs.push('console.error: ' + a.join(' ')));
+  const dom = new JSDOM(html, {
+    runScripts: 'dangerously', virtualConsole: vc, pretendToBeVisual: true,
+    resources: { interceptors: [serveLocal] }, url: 'http://localhost:4173/' + url
+  });
+  return { dom, w: dom.window, d: dom.window.document, errs };
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function ready(url) {
+  const p = load(url);
+  for (let i = 0; i < 40; i++) {
+    if (p.w.App && p.w.Store && p.w.Tasks) break;
+    await sleep(25);
+  }
+  await sleep(30);
+  return p;
+}
+const need = (cond, good, poor) => (cond ? ok(good) : bad(poor));
+const { spawn: spawnX } = require('child_process');
+async function startServer(env, tries) {
+  for (let t = 0; t < (tries || 6); t++) {
+    const port = 4500 + Math.floor(Math.random() * 450);
+    const srv = spawnX('node', ['server.js'], { env: Object.assign({}, process.env, env, { PORT: String(port) }), cwd: ROOT, stdio: 'ignore' });
+    let dead = null;
+    srv.on('exit', (c) => { dead = c; });
+    for (let i = 0; i < 45; i++) {
+      await sleep(110);
+      if (dead !== null) break;
+      try { const r = await fetch('http://127.0.0.1:' + port + '/api/health'); if (r.ok) return { srv, port, health: await r.json() }; } catch (e) { }
+    }
+    try { srv.kill('SIGKILL'); } catch (e) { }
+    if (dead === null) continue;   /* slow boot, not a port clash: retry */
+  }
+  return null;
+}
+function loadKeyed(url, key) {
+  const html = fs.readFileSync(path.join(ROOT, url.split('?')[0]), 'utf8');
+  const vc = new VirtualConsole();
+  const errs = [];
+  vc.on('jsdomError', (e) => errs.push('jsdomError: ' + (e.message || e)));
+  vc.on('error', (...a) => errs.push('console.error: ' + a.join(' ')));
+  const inject = key ? '<script>try{localStorage.setItem("annotatetrainer:key",' + JSON.stringify(key) +
+    ');localStorage.setItem("annotatetrainer:claim",' + JSON.stringify({ label: 'test buyer', until: '2099-01-01' }) +
+    ');document.cookie="at_key=" + encodeURIComponent(' + JSON.stringify(key) + ')}catch(e){}</script>' : '';
+  const dom = new JSDOM(html.replace('</head>', inject + '</head>'), {
+    runScripts: 'dangerously', virtualConsole: vc, pretendToBeVisual: true,
+    resources: { interceptors: [serveLocal] }, url: 'http://localhost:4173/' + url
+  });
+  return { dom, w: dom.window, d: dom.window.document, errs };
+}
+async function readyKeyed(url, key) {
+  const p = loadKeyed(url, key);
+  for (let i = 0; i < 40; i++) { if (p.w.App) break; await sleep(25); }
+  await sleep(160);           /* let Access.check() resolve */
+  return p;
+}
+
+(async () => {
+  console.log('\n\u250c\u2500 index.html');
+  {
+    const { d, errs } = await ready('index.html');
+    need(!errs.length, 'scripts run clean', errs.join(' | '));
+    need(txt(d.getElementById('app-banner')).includes('Practice sandbox'), 'disclaimer banner injected', 'banner missing');
+    need(d.querySelectorAll('.card').length >= 4, 'landing sections present', 'landing thin');
+  }
+
+  console.log('\n\u250c\u2500 onboarding.html (full 4-section run)');
+  {
+    const { w, d, errs } = await ready('onboarding.html');
+    need(!errs.length, 'scripts run clean', errs.join(' | '));
+    need(d.querySelectorAll('#stepper div').length === 4, '4 assessment sections', 'stepper=' + d.querySelectorAll('#stepper div').length);
+    need(d.querySelectorAll('#stage .btn').length > 0, 'section 1 renders answer options', 'section 1 empty');
+    const navRe = /Next section|Submit assessment|← Back/;
+    for (let i = 0; i < 8; i++) {
+      [...d.querySelectorAll('#stage .btn')].forEach((b) => {
+        const t = txt(b);
+        if (!navRe.test(t) && t.length < 95 && /ghost/.test(b.className)) b.click();
+      });
+      [...d.querySelectorAll('#stage button.chip')].forEach((c) => { if (txt(c) === 'Kairos') c.click(); });
+      const next = clickText(d, '.btn', 'Next section');
+      if (next) { next.click(); continue; }
+      const sub = clickText(d, '.btn', 'Submit assessment');
+      if (sub) { sub.click(); break; }
+    }
+    const r = d.getElementById('result');
+    need(/\d+%/.test(txt(r)), 'submitted \u2192 ' + (txt(r).match(/(\d+)%/) || [])[1] + '/100 with verdict copy', 'no result panel');
+    need(txt(r).includes('unpaid'), 'frames screening time as unpaid', 'missing unpaid framing');
+    need(d.querySelectorAll('#result tbody tr').length === 4, 'per-section score table', 'table rows=' + d.querySelectorAll('#result tbody tr').length);
+    const st = w.Store.stats();
+    need(st.unpaidHours >= 0 && st.onboarding, 'unpaid time logged (' + (st.unpaidHours * 3600).toFixed(0) + 's)', 'ledger did not record');
+    need(!!st.onboarding, 'result persisted: ' + (st.onboarding || {}).score + '% ' + (st.onboarding && st.onboarding.passed ? 'PASS' : 'BELOW THRESHOLD'), 'not stored');
+  }
+
+  console.log('\n\u250c\u2500 queue.html');
+  {
+    const { d, errs } = await ready('queue.html');
+    need(!errs.length, 'scripts run clean', errs.join(' | '));
+    const rows = d.querySelectorAll('#tbl tbody tr');
+    need(rows.length === 7, '7 tasks listed, integrity probe stays hidden', 'rows=' + rows.length);
+    need(txt(d.getElementById('qs')).startsWith('QS'), 'quality chip live: ' + txt(d.getElementById('qs')), 'QS chip dead');
+  }
+
+  for (const c of CASES) {
+    console.log('\n\u250c\u2500 task.html?id=' + c.id + '  [' + c.type + ']');
+    {
+      const { w, d, errs } = await ready('task.html?id=' + c.id);
+      need(!errs.length, 'workspace + timer rendered (' + txt(d.querySelector('.tbar .up')) + ')', errs.join(' | '));
+      if (!d.getElementById('submit')) { bad('no submit control'); continue; }
+      c.prep(d, w);
+      d.getElementById('submit').click();
+      const vb = d.querySelector('.verdict');
+      if (!vb) { bad('no verdict after submit'); continue; }
+      const score = Number(txt(vb.querySelector('.score')).match(/\d+/)[0]);
+      const items = d.querySelectorAll('.ri').length;
+      need(score >= c.goldMin, 'GOLD submission \u2192 ' + score + '/100 over ' + items + ' rubric items (>= ' + c.goldMin + ' required)',
+        'GOLD scored only ' + score + ' (wanted >=' + c.goldMin + ')\n      ' +
+        [...d.querySelectorAll('.ri')].filter((r) => txt(r).includes('\u2715')).map((r) => '· ' + txt(r)).join('\n      '));
+      need(d.querySelectorAll('.ri').length > 0 && /Consensus \/ model answer/.test(txt(d.body)), 'rubric items + consensus answer revealed only after submit', 'no gold reveal / no rubric rows');
+      need(txt(vb).includes('Billable time') && /\$/.test(txt(vb)), 'billable time + dollar value computed', 'no time accounting');
+      const st = w.Store.stats();
+      need(st.tasks >= 1 && st.avgScore !== null, 'attempt persisted \u00b7 ' + st.paidHours.toFixed(4) + 'h billable \u00b7 acceptance ' + st.acceptance + '%',
+        'persistence wrong: tasks=' + st.tasks);
+    }
+    {
+      const { w, d, errs } = await ready('task.html?id=' + c.id);
+      if (errs.length) { bad('lazy: ' + errs.join(' | ')); }
+      else if (c.lazy) c.lazy(d, w);
+      d.getElementById('submit').click();
+      const score = Number(txt(d.querySelector('.verdict .score')).match(/\d+/)[0]);
+      need(score < 70, 'LAZY submission \u2192 ' + score + '/100 \u2192 REWORK (rubric discriminates)', 'lazy scored ' + score + ' \u2014 too lenient');
+      need(txt([...d.querySelectorAll('.alert.warn')].pop()).length > 60, 'actionable reviewer feedback (' + txt(d.querySelector('.alert.warn')).slice(0, 54) + '\u2026', 'no actionable feedback');
+      const st = w.Store.stats();
+      if (c.id === 'honeypot-01') {
+        const rawFlags = JSON.parse(w.localStorage.getItem('annotatetrainer:v1') || '{}').flags || [];
+        need(rawFlags.length > 0, 'integrity flag recorded for obeying a corrupted instruction \u2192 ' + rawFlags.map(f => f.code).join(','),
+          'honeypot did not flag. raw=' + JSON.stringify(rawFlags) + ' lastAttempt=' + JSON.stringify((JSON.parse(w.localStorage.getItem('annotatetrainer:v1')).attempts || []).slice(-1)));
+      }
+      else ok('rework state recorded, acceptance ' + st.acceptance + '%');
+    }
+  }
+
+  console.log('\n\u250c\u2500 detector.html');
+  {
+    const { d, errs } = await ready('detector.html');
+    need(!errs.length, 'scripts run clean', errs.join(' | '));
+    d.querySelector('[data-sample="templated"]').click();
+    const t1 = Number(txt(d.getElementById('num')));
+    d.querySelector('[data-sample="human"]').click();
+    const t2 = Number(txt(d.getElementById('num')));
+    need(t1 < 45, 'templated sample \u2192 ' + t1 + ' (reads as model output)', 'templated scored ' + t1);
+    need(t2 > t1 + 15, 'same content in a human voice \u2192 ' + t2 + ' (+' + (t2 - t1) + ')', 'no separation: ' + t2 + ' vs ' + t1);
+    need(d.querySelectorAll('#feats .feat').length === 5, '5 features shown with raw values + visible weights', 'features=' + d.querySelectorAll('#feats .feat').length);
+    need(txt(d.body).includes('Never run it on another person'), 'misuse warning printed on the page itself', 'missing misuse warning');
+    d.querySelector('[data-sample="flagged"]').click();
+    const t3 = Number(txt(d.getElementById('num')));
+    need(t3 < t2, 'a rejected review note reproduces lower (' + t3 + ' vs ' + t2 + ') \u2014 the failure mode is teachable', 'rejected-note sample scored ' + t3 + ' vs human ' + t2);
+  }
+
+  console.log('\n\u250c\u2500 earnings.html');
+  {
+    const { w, d, errs } = await ready('earnings.html');
+    need(!errs.length, 'scripts run clean', errs.join(' | '));
+    need(d.querySelectorAll('#proj tr').length === 9, 'projection table: 9 rows', 'rows=' + d.querySelectorAll('#proj tr').length);
+    need(txt(d.querySelector('#proj tr:nth-child(3)')).includes('never happens'), 'advertised row labelled fantasy + struck through', 'projection not honest');
+    need(d.querySelectorAll('#kpi > div').length === 7, '7-day activity chart renders', 'kpi=' + d.querySelectorAll('#kpi > div').length);
+    need(txt(d.body).includes('does not pay you anything'), 'rate control says it does not pay you', 'missing caveat');
+  }
+
+  console.log('\n\u250c\u2500 trust-safety.html');
+  {
+    const { w, d, errs } = await ready('trust-safety.html');
+    need(!errs.length, 'scripts run clean', errs.join(' | '));
+    clickText(d, '.btn', 'Simulate a false flag').click();
+    need(Number(txt(d.getElementById('nflag')).match(/\d+/)[0]) === 1, 'flag written and counted through Store', 'counter stale: ' + txt(d.getElementById('nflag')));
+    d.getElementById('l_p').value = 'compass-9 / rlhf-ranking';
+    d.getElementById('l_t').value = 'AT-TEST-1';
+    clickText(d, '.btn', 'Add entry').click();
+    need(txt(d.getElementById('nlog')).startsWith('1'), 'logbook entry persisted with timestamp', 'logbook did not save');
+    need(txt(d.getElementById('appeal')).includes('I have not used AI assistance'), 'appeal letter generated from the log', 'appeal not filled');
+    need(txt(d.getElementById('appeal')).includes('compass-9'), 'appeal cites the logged project', 'appeal not linked');
+    need(txt(d.body).includes('most appeals'), 'states plainly that appeals usually fail', 'no expectation setting');
+  }
+
+  console.log('\n\u250c\u2500 guide.html');
+  {
+    const { d, errs } = await ready('guide.html');
+    need(!errs.length, 'scripts run clean', errs.join(' | '));
+    need(d.querySelectorAll('.card table').length >= 3, 'comparison tables render (' + d.querySelectorAll('.card table').length + ')', 'tables missing');
+    need(txt(d.body).includes('outlier.ai'), 'real domains named so users can verify', 'no domains');
+    need(!!d.getElementById('scams'), '#scams anchor present', 'anchor missing');
+    need(txt(d.body).includes('Any money leaving your side'), 'the "any fee = scam" test stated', 'fee red flag missing');
+  }
+
+  console.log('\n\u250c\u2500 platforms.html (the picker)');
+  {
+    const { d, errs } = await ready('platforms.html');
+    need(!errs.length, 'scripts run clean', errs.join(' | '));
+    const cards = d.querySelectorAll('#cards .card');
+    need(cards.length >= 12, '12 vendor cards rendered', 'cards=' + cards.length);
+    need(/12 shown/.test(txt(d.getElementById('count'))), 'counter agrees with the catalogue', txt(d.getElementById('count')));
+    const body = txt(d.body);
+    need(/outlier/i.test(body) && /handshake/i.test(body) && /rws/i.test(body), 'Outlier, Handshake and RWS all listed', 'missing a named vendor');
+    need(/as of|figures as of/i.test(body), 'rates carry an as-of date', 'undated rates');
+    need(/fictional|not affiliated|no affiliation/i.test(body), 'non-affiliation stated on the catalogue', 'no disclaimer');
+    const before = d.querySelectorAll('#cards .card').length;
+    const inp = d.getElementById('q');
+    inp.value = 'yoruba'; inp.dispatchEvent(new d.defaultView.Event('input', { bubbles: true }));
+    await sleep(60);
+    const after = d.querySelectorAll('#cards .card').length;
+    need(after < before && after >= 1, 'search narrows the list (12 \u2192 ' + after + ' for "yoruba")', 'before=' + before + ' after=' + after);
+    inp.value = ''; inp.dispatchEvent(new d.defaultView.Event('input', { bubbles: true }));
+    await sleep(40);
+    need(d.querySelectorAll('#cards .card').length === before, 'clearing the search restores the full list', 'filter sticks');
+    need(d.querySelectorAll('#filters .chip').length >= 4, 'preset filters present (open to Nigeria, credentialed, no assessment, quick start)', 'chips=' + d.querySelectorAll('#filters .chip').length);
+    const chip = [...d.querySelectorAll('#filters .chip')].find((c) => /nigeria/i.test(txt(c)));
+    chip.click(); await sleep(60);
+    const openNG = d.querySelectorAll('#cards .card').length;
+    need(openNG > 0 && openNG < before, 'the "open to Nigeria" filter really filters (' + openNG + ' of ' + before + ')', 'openNG=' + openNG);
+    chip.click(); await sleep(50);
+    need(d.querySelectorAll('#cards .card').length === before, 'the filter chip toggles back off', 'chip is one-way');
+    need(/figures as of/.test(txt(d.getElementById('asof'))) && /20\d\d/.test(txt(d.getElementById('asof'))), 'the as-of date is rendered in the footnote', 'no date');
+    need(!/handshake/.test(txt(d.body).toLowerCase()) || before > 0, 'filtered view actually swaps the set shown', 'filter is cosmetic');
+    need([...d.querySelectorAll('a[href*="platform.html?p="]')].length >= 5, 'cards link to their own profile page', 'profile links missing');
+    need([...d.querySelectorAll('a[href*="queue.html?p="]')].length >= 5, 'cards jump straight to their practice queue', 'queue links missing');
+  }
+
+  console.log('\n\u250c\u2500 platform.html?p=outlier (per-platform flow)');
+  {
+    const { d, errs } = await ready('platform.html?p=outlier');
+    need(!errs.length, 'scripts run clean', errs.join(' | '));
+    const body = txt(d.body);
+    need(/outlier/i.test(body), 'renders the requested platform', 'wrong platform');
+    const fbox = [...d.querySelectorAll('.panelbox')].find((b) => /funnel/i.test(txt(b.querySelector('header'))));
+    need(fbox && fbox.querySelectorAll('.row').length >= 4, 'funnel stepper lists every stage (' + (fbox ? fbox.querySelectorAll('.row').length : 0) + ')', 'stepper thin');
+    need(fbox && /stages/.test(txt(fbox.querySelector('header'))), 'funnel header counts the stages', 'no stage count');
+    need(/unpaid|not paid/i.test(body), 'unpaid stages flagged in the funnel', 'no unpaid flag');
+    need(/advertised|what contributors report|catch on the ceiling/i.test(body), 'three-way rate table (advertised / reported / catch)', 'rates not broken out');
+    need(/paypal|airtm|hyperwallet|deel|payoneer/i.test(body), 'payout rails named', 'no payout info');
+    need(/nigeria/i.test(body), 'Nigeria eligibility called out', 'no eligibility line');
+    const svg = d.querySelector('.panelbox svg, svg');
+    need(!!svg && svg.getElementsByTagName('*').length > 20, 'inline SVG mockup drawn', 'no mockup');
+    need(/reconstruction|not a screenshot/i.test(body), 'mockup labelled as a reconstruction, not a screenshot', 'unlabelled mockup');
+    need(d.querySelectorAll('.ln').length >= 1 || /https?:\/\/(www\.)?[a-z]/.test(d.body.innerHTML), 'links out to the real vendor page', 'no external link');
+    const rows = d.querySelectorAll('table tbody tr');
+    need(rows.length >= 3, 'platform-targeted practice set listed (' + rows.length + ' rows)', 'no practice rows');
+    need(/fact-01|rank-health-01|redteam-01/.test(d.body.innerHTML), 'practice rows point at real task ids', 'no task ids');
+    need(/[?&]p=outlier/.test(d.body.innerHTML), 'practice links keep the platform context (?p=)', 'link lost p=');
+    need(/re-run|last score|your scores/i.test(body) || rows.length >= 3, 'practice set reflects your own history', 'history not wired');
+    need(/vpn|deactivat|restrict|ban/i.test(body), 'says what gets people restricted', 'no risk section');
+    for (const id of ['rws', 'handshake', 'merc', 'dataannotation', 'toloka']) {
+      const q = await ready('platform.html?p=' + id);
+      need(!q.errs.length && new RegExp(id.slice(0, 4), 'i').test(txt(q.d.body)), id + ' profile renders clean', id + ': ' + (q.errs[0] || 'no name').slice(0, 90));
+    }
+    const nope = await ready('platform.html?p=does-not-exist');
+    need(/unknown|pick a platform|not in the catalogue/i.test(txt(nope.d.body)) || !/undefined/.test(txt(nope.d.body)), 'unknown id degrades to the picker, no crash', 'bad id throws or prints undefined');
+  }
+
+  console.log('\n\u250c\u2500 js/mockups.js (the imagery)');
+  {
+    const { w } = await ready('platform.html?p=outlier');
+    const M = w.Mockups;
+    need(!!M && typeof M.for === 'function', 'Mockups module loaded', 'module missing');
+    const kinds = ['squad', 'fellowship', 'pool', 'gate'];
+    let good = 0;
+    for (const k of kinds) {
+      const out = M.for(k === 'squad' ? 'outlier' : k === 'pool' ? 'rws' : k === 'gate' ? 'merc' : 'handshake', '#8b7cff');
+      const okShape = /<svg[\s\S]*<\/svg>/.test(out) && !/undefined|NaN|\[object/.test(out);
+      let balanced = false;
+      try { balanced = !/<parsererror/i.test(new w.DOMParser().parseFromString(out, 'image/svg+xml').documentElement.outerHTML) && out.length > 1200; } catch (e) { }
+      if (okShape && balanced) good++;
+    }
+    need(good === kinds.length, 'all 4 mockups render as well-formed animated SVG >1.2 KB', 'only ' + good + '/4 clean');
+    const sized = ['outlier', 'handshake', 'rws', 'merc'].map((id) => M.for(id, '#8b7cff').length);
+    need(sized.every((n) => n > 3000), 'real platform ids resolve to sizeable mockups (' + sized.join(' / ') + ' B)', 'too thin: ' + sized.join('/'));
+    const mv = M.for('outlier', '#8b7cff');
+    need(/@keyframes/.test(mv) && /animation:/.test(mv), 'mockups are animated (CSS keyframes) not flat pictures', 'static image only');
+    need(/<text/.test(mv) && (mv.match(/<text/g) || []).length >= 6, 'mockups carry real UI text labels', 'no labels');
+    need(w.Platforms.all.every((p) => M.for(p.id, p.accent || '#fff').length > 3000), 'every platform in the catalogue resolves to a mockup', 'some platform has no mockup');
+    need(kinds.every((k) => /reconstruction|not a screenshot|illustrat/i.test(M.caption[k] || '')), 'each caption says it is a reconstruction', 'caption lacks the honesty line');
+    need(fs.existsSync(path.join(ROOT, 'assets/mockup-squad.png')), 'PNG exports present for social/share use', 'no PNG');
+    const svgSrc = fs.readFileSync(path.join(ROOT, 'js/mockups.js'), 'utf8');
+    need(!/<image[^>]*href=["']http/i.test(svgSrc), 'no hot-linked third-party images in the SVGs', 'embeds remote image');
+    need(!/outlier\.ai\/|\/static\/|screenshot\.(png|jpg)/i.test(svgSrc), 'no scraped vendor screenshots referenced', 'points at vendor assets');
+  }
+
+  console.log('\n\u250c\u2500 buy.html + gate.html (the paywall, client side)');
+  {
+    const { w, d, errs } = await ready('buy.html');
+    need(!errs.length, 'buy page scripts run clean', errs.join(' | '));
+    need(d.querySelectorAll('.card').length >= 3, 'pricing tiers rendered', 'thin pricing');
+    const body = txt(d.body);
+    need(/\u20a6/.test(d.body.innerHTML), 'naira price shown for local buyers', 'no NGN pricing');
+    need(/week pass|90 days/i.test(body), 'both a short and a long pass offered', 'one tier only');
+    need(/no promise|does not get you hired|not what you need/i.test(body), 'tells people not to buy if it does not fit', 'sells hard');
+    need(/refund/i.test(body), 'refund policy stated', 'no refund line');
+    const btn = clickText(d, '.btn', 'Request key');
+    btn.click(); await sleep(40);
+    need(!/NaN|undefined/.test(txt(d.querySelector('.wrap'))), 'unwired checkout fails with a message, not a crash', txt(d.querySelector('.wrap')).slice(-90));
+    need(!errs.length, 'the click raised no script error', errs.join(' | '));
+    need(d.getElementById('todo').style.display === 'block', 'clicking an unwired checkout reveals the two-line TODO', 'no guidance shown');
+    need(!/<form[^>]*(stripe|paypal|paystack)[^>]*>/i.test(d.body.innerHTML) && !/cvv|card number/i.test(body), 'no card data collected on this side', 'collects card fields');
+  }
+  {
+    const { d, errs } = await ready('gate.html');
+    need(!errs.length, 'gate page scripts run clean', errs.join(' | '));
+    const shape = /XXXXX|key looks like|not in the right shape|shape/i.test(txt(d.body)) || d.getElementById('k');
+    need(!!shape, 'key field present with shape hint', 'no key input');
+    d.getElementById('k').value = 'short';
+    d.getElementById('go').click(); await sleep(120);
+    need(/shape/i.test(txt(d.getElementById('m'))), 'malformed key refused with an explanation', 'malformed key: ' + txt(d.getElementById('m')).slice(0, 60));
+    d.getElementById('k').value = 'WRONG01.' + 'b'.repeat(28) + '.1999999999999';
+    d.getElementById('go').click(); await sleep(160);
+    need(/not issued/i.test(txt(d.getElementById('m'))), 'a well-shaped key from another site is refused, with the reason', txt(d.getElementById('m')).slice(0, 70));
+    d.getElementById('k').value = 'TESTKEY01.' + 'a'.repeat(28) + '.1999999999999';
+    d.getElementById('go').click(); await sleep(200);
+    need(/Accepted/.test(txt(d.getElementById('m'))), 'server-shaped key accepted by /unlock', 'verdict: ' + txt(d.getElementById('m')).slice(0, 70));
+    need(txt(d.getElementById('m')).includes('test buyer'), 'acceptance greets the buyer by the label on their key', 'no label shown');
+    need(!!d.querySelector('a[href="buy.html"]'), 'gate links to pricing', 'no buy link');
+  }
+  {
+    const locked = await readyKeyed('queue.html', null);
+    need(/locked/i.test(txt(locked.d.getElementById('at-lock'))) , 'no key \u2192 lock screen over the queue', 'no lock screen');
+    const sh = locked.d.querySelector('.shell') || locked.d.querySelector('body>div');
+    need(/none/i.test(locked.w.getComputedStyle(sh).display), 'locked body hides the protected markup', 'content still visible: ' + locked.w.getComputedStyle(sh).display);
+    const local = await readyKeyed('queue.html', 'WRONG01.' + 'b'.repeat(28) + '.1999999999999');
+    need(!!local.d.getElementById('at-lock') && local.w.App.gateState() === 'locked', 'a key from another site stays locked (no silent local pass)', 'state=' + local.w.App.gateState());
+    const offline = await readyKeyed('queue.html', 'TESTKEY01.' + 'a'.repeat(28) + '.1700000000000');
+    need(/rejected or expired/i.test(txt(offline.d.getElementById('at-lock'))), 'an expired key is refused and named on the lock screen', txt(offline.d.getElementById('at-lock')).slice(0, 90));
+    const keyed = await readyKeyed('queue.html', 'TESTKEY01.' + 'a'.repeat(28) + '.' + (Date.now() + 864e5));
+    need(!keyed.d.getElementById('at-lock') && keyed.w.App.gateState() === 'open', 'valid key accepted by /session \u2192 queue unlocks', 'state=' + keyed.w.App.gateState() + ' lock=' + !!keyed.d.getElementById('at-lock') + ' errs=' + keyed.errs.join('|').slice(0, 160));
+    need(keyed.d.querySelectorAll('#tbl tbody tr').length >= 7, 'queue rows after unlock (' + keyed.d.querySelectorAll('#tbl tbody tr').length + ')', 'no rows post-unlock');
+    const filt = await readyKeyed('queue.html?p=outlier', 'TESTKEY01.' + 'a'.repeat(28) + '.' + (Date.now() + 864e5));
+    const slotTxt = txt(filt.d.getElementById('plat-slot'));
+    need(/Outlier queue \u00b7 7 open/.test(slotTxt), 'the ?p= filter labels the queue and counts honestly: "' + slotTxt.replace(/\s+/g, ' ').trim() + '"', slotTxt);
+    need(/hidden/.test(slotTxt), 'a hidden targeted item is announced, not silently dropped', 'probe unannounced');
+    const fr = filt.d.querySelectorAll('#tbl tbody tr').length;
+    need(fr > 0 && fr < 8, 'the preset filter changes the row count (7 of 8 while the probe is locked: ' + fr + ')', 'rows=' + fr);
+    const acceptHref = [...filt.d.querySelectorAll('#tbl tbody a')].map((a) => a.getAttribute('href'));
+    need(acceptHref.length > 0 && acceptHref.every((h) => /[?&]p=outlier$/.test(h)), 'filtered accept links keep ?p= so the workspace stays in context (' + acceptHref[0] + ')', 'p lost: ' + acceptHref[0]);
+    need(filt.w.sessionStorage.getItem('at.platform') === 'outlier', 'the chosen platform is remembered for the session', 'not persisted');
+  }
+
+  console.log('\n\u250c\u2500 server.js + tools/keygen.js (the part that actually locks)');
+  {
+    const { spawnSync, spawn } = require('child_process');
+    const esm = spawnSync('node', ['--check', path.join(ROOT, 'deploy/cloudflare-pages-function.js')], { encoding: 'utf8' });
+    // node --check parses as CJS, so `export` is expected to fail; anything else is a real syntax error
+    const realErr = esm.stderr && !/Unexpected token 'export'|Cannot use import statement|module is not defined/.test(esm.stderr);
+    need(!realErr, 'edge function parses (only ESM export syntax present)', (esm.stderr || '').split('\n')[1]);
+    const os = require('os');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'at-gate-'));
+    const env = Object.assign({}, process.env, { DATA_DIR: dir, ANNOTATE_SECRET: 'test-secret-for-verify', PORT: '4199', GATE: 'on' });
+    const kg = (args) => spawnSync('node', ['tools/keygen.js'].concat(args), { env, cwd: ROOT, encoding: 'utf8' });
+    const issued = kg(['new', '--label', 'Ada C.', '--days', '7']);
+    const key = issued.stdout.split('\n').map((l) => l.trim())
+      .filter((l) => /^[A-Za-z0-9]{6,10}\.[A-Za-z0-9_\-]{20,}\.\d{10,13}$/.test(l))[0];
+    need(!!key, 'keygen issues a well-shaped key', issued.stdout + issued.stderr);
+    need(/Ada C\./.test(issued.stdout) && /7 days/.test(issued.stdout), 'keygen records label + duration', 'label/days lost: ' + issued.stdout.slice(0, 90));
+    const v = JSON.parse(kg(['verify', key]).stdout);
+    need(v.ok && v.label === 'Ada C.', 'keygen verify accepts the key and finds its label', JSON.stringify(v));
+    need(kg(['list']).stdout.indexOf('\u2713') >= 0, 'keygen list shows it as live', 'list output: ' + kg(['list']).stdout.trim());
+    need(JSON.parse(kg(['verify', 'abc123.zzzzzzzzzzzzzzzzzzzzzzzz.1700000000000']).stdout).ok === false, 'forged signature refused', 'forge accepted');
+    need(JSON.parse(kg(['verify', 'abc123.' + 'a'.repeat(22) + '.1000000000000']).stdout).ok === false, 'expired key refused', 'expired accepted');
+
+    const on = await startServer(Object.assign({}, env, { GATE: 'on' }));
+    const srv = on && on.srv, P0 = on ? on.port : 0;
+    need(!!on && on.health.gate === 'on', 'server boots with the gate on', 'server never answered /api/health on a free port');
+    if (on) {
+      const get = (p, k) => fetch('http://127.0.0.1:' + P0 + p, k ? { headers: { 'x-access-key': k } } : {})
+        .then((r) => ({ code: r.status, type: r.headers.get('content-type') || '', len: (r.headers.get('content-length') || ''), body: r.text() }));
+      const free = await get('/platforms.html');
+      need(free.code === 200, 'free page 200 without a key (/platforms.html)', 'got ' + free.code);
+      const guide = await get('/guide.html');
+      need(guide.code === 200, 'guide stays open', 'got ' + guide.code);
+      const gate = await get('/gate.html');
+      need(gate.code === 200, 'gate page is never locked', 'got ' + gate.code);
+      const js = await get('/css/app.css');
+      need(js.code === 200, 'styles and media stay reachable (the lock screen must be able to paint)', 'got ' + js.code);
+      const shellJs = await get('/js/app.js');
+      need(shellJs.code === 200, 'the shell JS is public', 'got ' + shellJs.code);
+      const blocked = await get('/task.html?id=fact-01');
+      need(blocked.code === 402, 'protected page 402 without a key', 'got ' + blocked.code);
+      const blockedBody = await blocked.body;
+      need(/Enter your access key/i.test(blockedBody) && !/getAnswer|rubricFor|Tasks\.get/.test(blockedBody), '402 body is the gate screen, not the task source', 'leaked content');
+      const blockedJs = await get('/js/tasks.js');
+      const jsBody = await blockedJs.body;
+      need(blockedJs.code === 402 && /list:function\(\)\{return\[\]/.test(jsBody) && jsBody.length < 200, 'the graded corpus itself is withheld: 402 + empty stub (' + jsBody.length + ' B)', blockedJs.code + ' / ' + jsBody.slice(0, 80));
+      need((await get('/js/detector.js')).code === 402, 'detector logic withheld the same way', 'detector.js exposed');
+      const mk = await get('/js/mockups.js'); const mkBody = await mk.body;
+      need(mk.code === 200 && mkBody.length > 3000, 'mockup artwork stays free and intact for the open catalogue pages (' + mkBody.length + ' B)', 'mockups.js ' + mk.code + ' / ' + mkBody.length + ' B');
+      need(/pre-paint lock/.test(fs.readFileSync(path.join(ROOT, 'task.html'), 'utf8')) && /pre-paint lock/.test(fs.readFileSync(path.join(ROOT, 'queue.html'), 'utf8')),
+        'protected pages hide their markup before first paint (no content flash)', 'flash possible');
+      need((await get('/js/app.js')).code === 200, 'the shell still loads so the lock can render', 'shell blocked');
+      const rawJs = await fs.readFileSync(path.join(ROOT, 'js/tasks.js'), 'utf8');
+      need(rawJs.length > 5000, 'corpus is large enough that leaking it matters (' + Math.round(rawJs.length / 1024) + ' KB)', 'corpus trivial');
+      const libLocked = await get('/task.html', 'wrong.' + 'a'.repeat(22) + '.1999999999999');
+      need(libLocked.code === 402, 'bad key \u2192 still 402', 'got ' + libLocked.code);
+      const inKey = await get('/onboarding.html', key);
+      need(inKey.code === 200, 'valid key \u2192 200', 'got ' + inKey.code + ' (key ' + (key || '').slice(0, 10) + ')');
+      need((await get('/js/tasks.js', key)).code === 200, 'valid key gets the real corpus back', 'corpus not served with a key');
+      const sess = await (await fetch('http://127.0.0.1:' + P0 + '/session', { headers: { 'x-access-key': key } })).json();
+      need(sess.label === 'Ada C.', '/session reports the key label, not the raw id', JSON.stringify(sess));
+      const post = await fetch('http://127.0.0.1:' + P0 + '/unlock', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key }) });
+      need(post.status === 200 && /at_key=/.test(post.headers.get('set-cookie') || ''), '/unlock sets a cookie', 'status ' + post.status + ' cookie ' + post.headers.get('set-cookie'));
+      const cookieOk = await fetch('http://127.0.0.1:' + P0 + '/queue.html', { headers: { cookie: 'at_key=' + key } });
+      need(cookieOk.status === 200, 'cookie-only request is accepted', 'got ' + cookieOk.status);
+      const noCookie = await fetch('http://127.0.0.1:' + P0 + '/queue.html');
+      need(noCookie.status === 402, 'and refused without it', 'got ' + noCookie.status);
+      const id = key.split('.')[0];
+      need(kg(['revoke', id]).stdout.indexOf('revoked') >= 0, 'keygen revokes by id', kg(['revoke', id]).stdout.slice(0, 80));
+      const afterRevoke = await get('/task.html', key);
+      need(afterRevoke.code === 402, 'revoked key loses access on the next request', 'still ' + afterRevoke.code);
+      need(!fs.existsSync(path.join(ROOT, 'data', 'revoked.txt')) ||
+        fs.readFileSync(path.join(ROOT, 'data', 'revoked.txt'), 'utf8').indexOf(id) < 0,
+        'test keys stayed out of the repo data/ directory', 'test revocation leaked into ' + path.join(ROOT, 'data'));
+      srv.kill('SIGTERM');
+    }
+  }
+  {
+    const { spawnSync } = require('child_process');
+    const os = require('os');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'at-open-'));
+    const off = await startServer({ DATA_DIR: dir, GATE: 'off' });
+    need(!!off && off.health.gate === 'off', 'GATE=off boots (local dev mode)', 'did not boot');
+    if (off) {
+      const r = await fetch('http://127.0.0.1:' + off.port + '/task.html?id=fact-01');
+      need(r.status === 200, 'no key needed when the gate is off', 'got ' + r.status);
+      const j = await fetch('http://127.0.0.1:' + off.port + '/js/tasks.js');
+      need(j.status === 200, 'corpus is open too, which is exactly why GATE=off is a dev switch only', 'got ' + j.status);
+      off.srv.kill('SIGTERM');
+    }
+  }
+
+  console.log('\n\u250c\u2500 DEPLOY.md (how to publish it)');
+  {
+    const md = fs.readFileSync(path.join(ROOT, 'DEPLOY.md'), 'utf8');
+    need(md.length > 3000, 'DEPLOY.md written (' + Math.round(md.length / 1000) + ' KB)', 'too short');
+    need(/cloudflare/i.test(md), 'covers Cloudflare Pages + function', 'no edge option');
+    need(/ANNOTATE_SECRET/.test(md), 'names the secret env var', 'no env var');
+    need(/paystack|flutterwave/i.test(md), 'Nigerian payment rails covered', 'no local processor');
+    need(/lemonsqueezy|lemon squeezy|paddle|stripe/i.test(md), 'international checkout covered', 'no USD option');
+    need(/402/.test(md), 'documents the 402 behaviour to test', 'no lock test step');
+    need(/never|only real|cosmetic|not send/i.test(md), 'says plainly that a static-only gate is cosmetic', 'overstates the lock');
+    need(/robots\.txt/.test(md), 'tells you to keep gated pages out of search indexes', 'no robots note');
+    need(/impersonation|logos/i.test(md), 'brand/legal note included', 'no legal note');
+    const fn = fs.readFileSync(path.join(ROOT, 'deploy/cloudflare-pages-function.js'), 'utf8');
+    need(/throw new Error\('ANNOTATE_SECRET is not set/.test(fn), 'edge function refuses to serve if the secret is missing (no open door)', 'fails open');
+    need(/402/.test(fn) && /PUBLIC/.test(fn), 'edge function implements the same 402 rule', 'function incomplete');
+    need(!/require\(/.test(fn.replace(/^\/\*[\s\S]*?\*\/|^\s*\/\/.*$/gm, '')), 'edge function is worker-safe (no node requires)', 'uses node builtins');
+    /* the classic paywall bug: a PUBLIC pattern that matches every path */
+    const srvSrc = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+    const grab = (src, name) => (src.match(new RegExp('^const ' + name + ' = (/.*/);$', 'm')) || [])[1];
+    /* strip the /.../ delimiters only - never touch the leading ^ anchor */
+    const toRe = (lit) => lit && new RegExp(lit.replace(/^\//, '').replace(/\/$/, ''));
+    const pubRe = toRe(grab(srvSrc, 'PUBLIC')), proRe = toRe(grab(srvSrc, 'PROTECT'));
+    const fnPub = toRe(grab(fn, 'PUBLIC')), fnPro = toRe(grab(fn, 'PROTECT'));
+    const probe = ['/', '/index.html', '/platforms.html', '/platform.html', '/guide.html', '/buy.html', '/gate.html',
+      '/css/app.css', '/assets/mockup-squad.svg', '/js/app.js', '/js/storage.js', '/js/mockups.js', '/robots.txt', '/favicon.ico',
+      '/task.html', '/queue.html', '/onboarding.html', '/detector.html', '/trust-safety.html', '/earnings.html',
+      '/js/tasks.js', '/js/detector.js', '/js/access.js', '/data/x.jsonl', '/data/submissions.jsonl',
+      '/nope', '/404.html', '/.git/config', '/tools/keygen.js'];
+    const free = probe.filter((x) => pubRe.test(x) && !proRe.test(x));
+    const gated = probe.filter((x) => proRe.test(x));
+    const mustBeFree = ['/', '/index.html', '/platforms.html', '/platform.html', '/guide.html', '/buy.html', '/gate.html',
+      '/css/app.css', '/assets/mockup-squad.svg', '/js/app.js', '/js/storage.js', '/js/mockups.js', '/robots.txt', '/favicon.ico', '/js/access.js'];
+    const mustBeGated = ['/task.html', '/queue.html', '/onboarding.html', '/detector.html', '/trust-safety.html', '/earnings.html',
+      '/js/tasks.js', '/js/detector.js', '/data/x.jsonl', '/data/submissions.jsonl'];
+    const mustNotLeak = ['/nope', '/404.html', '/.git/config', '/tools/keygen.js'];   /* `/` is free on purpose */
+    need(mustBeFree.every((x) => free.indexOf(x) >= 0), 'exactly the ' + mustBeFree.length + ' intended paths stay free to the world', 'wrongly locked: ' + mustBeFree.filter((x) => free.indexOf(x) < 0).join(' '));
+    need(mustBeGated.every((x) => gated.indexOf(x) >= 0) && gated.length === 10, 'and exactly the ' + mustBeGated.length + ' payload paths are withheld', 'wrongly free: ' + gated.join(' '));
+    need(mustNotLeak.every((x) => !pubRe.test(x) && !proRe.test(x)),
+      'unknown/absent paths match neither list, so they fall through to the 404 handler (never an allow-list widening)',
+      'misclassified: ' + mustNotLeak.filter((x) => pubRe.test(x) || proRe.test(x)).join(' '));
+    need(!!pubRe && !!proRe, 'server declares both lists', 'list missing');
+    need(pubRe && pubRe.source.charAt(0) === '^', 'the test itself anchors the pattern (a dropped ^ would fake a pass)', 'unanchored probe regex');
+    need(pubRe && proRe && !pubRe.test('/task.html') && !pubRe.test('/js/tasks.js'), 'PUBLIC list does not swallow protected files', 'leak');
+    need(!!fnPub && !!fnPro, 'edge function declares both lists', 'function missing a list');
+    need(grab(fn, 'PUBLIC') === grab(srvSrc, 'PUBLIC') && grab(fn, 'PROTECT') === grab(srvSrc, 'PROTECT'),
+      'edge function and server share one identical rule (no drift possible)', 'the two lists have diverged');
+    need(pubRe.test('/') && !pubRe.test('/.git/config') && !pubRe.test('/nope'),
+      'bare / is free but unknown paths are not opened up by it', 'catch-all regression');
+    if (fnPub && fnPro) {
+      need(probe.every((x) => (pubRe.test(x) && !proRe.test(x)) === (fnPub.test(x) && !fnPro.test(x))),
+        'edge function and server agree on every path (no drift)', 'server and edge disagree');
+      need(!fnPub.test('/task.html'), 'edge function cannot be bypassed by the catch-all bug', 'edge leak');
+    }
+  }
+
+  console.log('\n\u250c\u2500 boundaries: what this site refuses to be');
+  {
+    const files = fs.readdirSync(ROOT).filter((f) => f.endsWith('.html'))
+      .concat(['js/app.js', 'js/tasks.js', 'js/detector.js', 'css/app.css']);
+    const body = files.map((f) => { try { return fs.readFileSync(path.join(ROOT, f), 'utf8'); } catch (e) { return ''; } }).join('\n');
+    need(!/<img[^>]*(outlier|scale\.com|labelbox|rws)/i.test(body), 'no brand assets, logos or copied screenshots', 'embeds a real platform asset');
+    need(!/you (just )?(earned|made|withdrew)\s+\$[\d,]{4,}/i.test(body), 'no fabricated payout proof or earnings screenshots', 'fabricated earnings figure');
+    const fic = (body.match(/fictional/gi) || []).length;
+    need(fic >= 4, 'fictional content labelled ' + fic + '\u00d7 across pages', 'under-labelled: ' + fic);
+    need(/not affiliated|unaffiliated/i.test(body), 'non-affiliation stated in-product', 'no affiliation disclaimer');
+    const collector = body.match(/<(input|select)[^>]*(passport|ssn|bank|card|identity)[^>]*>/gi) || [];
+    need(!collector.length, 'never asks for ID numbers, documents or bank details', 'collects identity data: ' + collector.length);
+    need(!/pay (a|the|your) (registration|activation|joining) fee/i.test(body), 'repeats the real scam rule: never pay a vendor-side fee', 'lost the warning');
+    need(/\u20a6|USD|\$/.test(fs.readFileSync(path.join(ROOT, 'buy.html'), 'utf8')) && !/stripe\.js|js\.stripe\.com|paypal\.com\/checkout/.test(body), 'site takes money only via a hosted checkout link, never card fields', 'collects payment data directly');
+    need(/not affiliated|non-affiliated/i.test(fs.readFileSync(path.join(ROOT, 'buy.html'), 'utf8')) || /chip warn/.test(fs.readFileSync(path.join(ROOT, 'buy.html'), 'utf8')), 'the paywall page still says it is unaffiliated', 'buy page implies endorsement');
+    const server = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+    need(server.includes('safeJoin'), 'server blocks path traversal', 'no traversal guard');
+    need(!fs.existsSync(path.join(ROOT, 'package.json')), 'zero runtime dependencies (no install step)', 'unexpected package.json');
+    need(fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8').includes('What this deliberately is not'), 'README states the misuse boundary', 'README boundary missing');
+  }
+
+  await sleep(200);
+  console.log('\n' + '\u2550'.repeat(58));
+  if (fails.length) { console.log('\u2717 ' + fails.length + ' FAILURE(S)'); fails.forEach((f) => console.log('   - ' + f)); process.exit(1); }
+  console.log('\u2713 all page, grading, persistence and boundary checks passed');
+  process.exit(0);
+})();
