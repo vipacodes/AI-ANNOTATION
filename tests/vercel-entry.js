@@ -110,6 +110,15 @@ const get = (p, opts) => new Promise((resolve, reject) => {
   }
 
 
+  if (process.argv.indexOf('--order') >= 0) {
+    const g = require(path.join(ROOT, 'api/_gate.js'));
+    const out = String(g.gateScreen('/detector.html'));
+    const stamped = /var __GATE_TARGET = "\/detector\.html"/.test(out);
+    const notFallbackOnly = !/location\.reload/.test(out) || stamped;
+    console.log(stamped && notFallbackOnly ? 'ORDER-OK' : 'ORDER-BAD ' + JSON.stringify(out.match(/var __GATE_TARGET[^\n]{0,40}/) || ['no stamp'][0]));
+    process.exit(stamped && notFallbackOnly ? 0 : 1);
+  }
+
   // The mirror path: .vercelignore removes the paid corpus from the deployment, so an AUTHENTICATED
   // Vercel visitor had nothing to be served and got the lock screen they had just paid past. This runs
   // the real handler with ANNOTATE_MIRROR set, against the live gated origin, using the owner key from
@@ -291,6 +300,25 @@ const get = (p, opts) => new Promise((resolve, reject) => {
   }
   need(/@@GATE_PATH@@/.test(embedded.EMBED_SCREEN),
     'the embedded gate screen still carries the render token server.js/_gate.js substitute into');
+  // The regression this exists to prevent: deploy/gate-fallback.html IS present in the Vercel artifact
+  // (only gate.html is ignored), so any file-exists check that consults it first wins — and it is the
+  // dumber screen, a page that only reloads. Same 402, same lock, silently no return path. Asserted in
+  // a child process because gateScreen closes over ROOT at module load, and the parent's copy of
+  // _gate.js is already bound to the real repo (a second server on this port would not have told us
+  // anything either — the harness caught that for me).
+  const dirB = fsx.mkdtempSync(path.join(os.tmpdir(), 'vercel-order-'));
+  for (const f of ['api/_gate.js', 'api/gate-bundled.js', 'deploy/cloudflare-pages-function.js', 'deploy/package.json',
+                   'deploy/gate-fallback.html', '404.html', 'gate.html', 'index.html']) {
+    const src2 = path.join(ROOT, f); if (!fsx.existsSync(src2)) continue;
+    const dst = path.join(dirB, f); fsx.mkdirSync(path.dirname(dst), { recursive: true }); fsx.copyFileSync(src2, dst);
+  }
+  fsx.rmSync(path.join(dirB, 'gate.html'));   // exactly what .vercelignore does to a real deploy
+  const orderOut = require('child_process').spawnSync(process.execPath, [__filename, '--order'],
+    { cwd: ROOT, env: Object.assign({}, process.env, { ANNOTATE_DEPLOY_ROOT: dirB }), encoding: 'utf8', timeout: 60000 });
+  const oo = (orderOut.stdout || '') + (orderOut.stderr || '');
+  need(/ORDER-OK/.test(oo), 'a Vercel-shaped root (fallback present, gate.html absent) still renders the stamped screen',
+    oo.replace(/\s+/g, ' ').slice(0, 200));
+  fsx.rmSync(dirB, { recursive: true, force: true });
   need(!/<\/script>/.test(embedded.EMBED_SCREEN) || /<\/script>/i.test(fs.readFileSync(path.join(ROOT, 'api/_gate.js'), 'utf8')) === false,
     'no raw </script> survives the embed, which would truncate the paywall inline script');
 

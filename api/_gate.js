@@ -128,14 +128,14 @@ function gateScreen(refused) {
   const render = (txt) => String(txt).indexOf('/*@@GATE_PATH@@*/') >= 0
     ? String(txt).replace("/*@@GATE_PATH@@*/''", JSON.stringify(String(refused)))
     : String(txt).replace(/var __GATE_TARGET = [^;]*;/, 'var __GATE_TARGET = ' + JSON.stringify(String(refused)) + ';');
-  // Only worth gate.html when there IS a path to put in it: gate.html on its own is a page about keys,
-  // while the shipped fallback is a self-contained screen that reloads in place. Prefer the file (dev,
-  // Cloudflare), then the embed (Vercel, where neither file is in the artifact), then the fallback.
-  if (refused) {
-    const p = path.join(ROOT, 'gate.html');
-    if (fs.existsSync(p) && fs.statSync(p).isFile()) return Buffer.from(render(fs.readFileSync(p)));
-    if (EMBED_SCREEN.indexOf('@@GATE_PATH@@') >= 0) return Buffer.from(render(EMBED_SCREEN));
-  }
+  // Order matters, and production proved it: deploy/gate-fallback.html IS present in the Vercel
+  // artifact (only gate.html is ignored), so any branch that consults it first wins — and it is the
+  // dumber of the two screens, a self-contained page that just reloads. Put the rendered one ahead of
+  // it and the return-to dies quietly: same 402, same lock, no path. gate.html itself is only worth
+  // reading from disk when there is a path to stamp into it.
+  const p = path.join(ROOT, 'gate.html');
+  if (refused && fs.existsSync(p) && fs.statSync(p).isFile()) return Buffer.from(render(fs.readFileSync(p)));
+  if (refused) return Buffer.from(render(EMBED_SCREEN));
   const g = path.join(ROOT, 'deploy/gate-fallback.html');
   if (fs.existsSync(g)) return fs.readFileSync(g);
   return Buffer.from(EMBED_GATE);
@@ -273,4 +273,4 @@ function makeFetch(baseOrigin) {
 const LOAD_ERRORS = [];
 function storeErr(m) { LOAD_ERRORS.push(m); }
 
-module.exports = { EMBED_GATE, EMBED_404, EMBED_SCREEN, loadGate, originalPath, nextHandler, fromMirror, MIRROR_ORIGIN, makeFetch, TYPES, ROOT, PREFIX, LOAD_ERRORS };
+module.exports = { EMBED_GATE, EMBED_404, EMBED_SCREEN, gateScreen, loadGate, originalPath, nextHandler, fromMirror, MIRROR_ORIGIN, makeFetch, TYPES, ROOT, PREFIX, LOAD_ERRORS };
