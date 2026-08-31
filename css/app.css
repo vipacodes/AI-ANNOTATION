@@ -237,7 +237,15 @@ tbody tr:hover td{background:#161c27}
 .scrolly{max-height:340px;overflow:auto}
 
 /* ---------- paywall lock ---------- */
-body[data-gated].at-locked>div{display:none!important}
+/* Default-hidden, declared in CSS rather than written by a head script: the attribute is on <html>
+   before any paint, the page's own script removes it when a valid key is in storage, and App.bootGate
+   owns it from then on. Only .shell is hidden, so the banner and the lock overlay stay visible — the
+   bug this replaced hid body>div and left a subscriber on a blank page with no way in. */
+/* .shell is the trainer's own content root; .cl-app is the clone pages' (p.html), which deliberately has
+   no .shell because it must not look like this site. Both are hidden by the same attribute so there is one
+   mechanism, one place to lift it, and no page that can forget to opt in. */
+html[data-prelock] body[data-gated] .shell,
+html[data-prelock] body[data-gated] .cl-app{display:none!important}
 body.at-locked{overflow:hidden}
 #at-lock{animation:rise .4s cubic-bezier(.2,.8,.2,1) both}
 .softbar{background:linear-gradient(90deg,#3b2a10,#2a2410);border-bottom:1px solid #6e5620;padding:8px 20px;font-size:12.5px;color:#ffe8bd}

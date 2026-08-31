@@ -74,7 +74,7 @@ async function verify(key, request) {
    supabase/functions/annotate/index.ts — the test suite asserts all three agree. */
 /* BEGIN-LISTS */
 const PUBLIC = /^\/(?:(?:index|gate|buy|guide|platforms|platform)\.html|[A-Z][A-Za-z]*\.md|deploy\/[\w.-]+\.md|(?:css|assets|api|\.well-known)\/[^/]*(?:\/[^/]*)*|js\/(?:storage|access|app|platforms|mockups|crypto)\.js|robots\.txt|sitemap\.xml|favicon\.ico|(?:|$))$/;
-const PROTECT = /^\/(?:task|queue|onboarding|detector|trust-safety|earnings)\.html$|^\/js\/(?:tasks|detector)\.js$|^\/data\//;
+const PROTECT = /^\/(?:p|task|queue|onboarding|detector|trust-safety|earnings)\.html$|^\/js\/(?:tasks|detector|workspace|skins|clone)\.js$|^\/data\//;
 /* END-LISTS */
 
 export async function onRequest(context) {

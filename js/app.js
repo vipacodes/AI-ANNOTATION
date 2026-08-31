@@ -231,11 +231,20 @@
     if (!body || body.getAttribute('data-gated') === null) return;
     var A = window.Access;
     if (!A) return;
-    var hide = function () { body.classList.add('at-locked'); };
-    var show = function () { body.classList.remove('at-locked'); var l = document.getElementById('at-lock'); if (l) l.parentNode.removeChild(l); };
+    var rootEl = document.documentElement;
+    var hide = function () { body.classList.add('at-locked'); rootEl.setAttribute('data-prelock', '1'); };
+    var show = function () {
+      body.classList.remove('at-locked');
+      // ONE mechanism, one place to lift it. The previous version kept a class in CSS, a rule in CSS and a
+      // <style> written by a head script, and a fix that removed two of the three still showed a blank
+      // page — which is precisely why the whole thing is now an attribute a test can read.
+      rootEl.removeAttribute('data-prelock');
+      var l = document.getElementById('at-lock'); if (l && l.parentNode) l.parentNode.removeChild(l);
+    };
     hide();
     LOCK.state = 'checking';
-    if (!A.key()) { LOCK.state = 'locked'; return lock('You need an access key for the practice platform.', false); }
+    if (!A.key()) { LOCK.state = 'locked';   /* .shell stays hidden; the lock overlay below is the way in */
+      return lock('You need an access key for the practice platform.', false); }
     A.check(function (ok, info) {
       if (ok) {
         show();

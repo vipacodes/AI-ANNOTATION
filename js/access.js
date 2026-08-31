@@ -38,10 +38,13 @@
     set: function (k, c) {
       try {
         localStorage.setItem(KEY, k);
+        // Mirror for the pre-paint head script, which runs before this file exists and can only read a
+        // fixed key name. Same value, same 3-part shape, so the two checks cannot disagree.
+        try { localStorage.setItem('at_key', k); } catch (e) { }
         localStorage.setItem(CLAIM, JSON.stringify(c || { label: 'local', until: null }));
       } catch (e) { }
     },
-    clear: function () { try { localStorage.removeItem(KEY); localStorage.removeItem(CLAIM); } catch (e) { } },
+    clear: function () { try { localStorage.removeItem(KEY); localStorage.removeItem(CLAIM); localStorage.removeItem('at_key'); } catch (e) { } },
 
     /* is the visitor allowed in? cb(bool, info) */
     check: function (cb) {

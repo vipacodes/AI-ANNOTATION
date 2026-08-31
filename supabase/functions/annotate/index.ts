@@ -42,7 +42,7 @@ const ANON_KEY = env('ANON_KEY') || env('SUPABASE_ANON_KEY') || env('PUBLISHABLE
 // into a curl. It earned its place: Supabase accepted two deploys in a row while the worker kept
 // serving the previous build, so a route I had just added looked like it was missing from the code.
 // Every "that cannot happen" debugging loop in this file started with a stale build marker.
-const BUILD = 'annotate-2026-08-30.19';
+const BUILD = 'annotate-2026-08-30.20';
 
 const KEY_RE = /^([A-Za-z0-9]{6,10})\.([A-Za-z0-9_\-]{20,})\.(\d{10,13})$/;
 const KEY_COOKIE = 'at_key';
@@ -63,7 +63,7 @@ const TYPES = {
 // knowing about it, and the lock's fallback is a site 404 page, which looks like a routing bug.
 const PUBLIC = /^\/(?:(?:index|gate|buy|guide|platforms|platform)\.html|[A-Z][A-Za-z]*\.md|deploy\/[\w.-]+\.md|(?:css|assets|api|\.well-known)\/[^/]*(?:\/[^/]*)*|js\/(?:storage|access|app|platforms|mockups|crypto)\.js|robots\.txt|sitemap\.xml|favicon\.ico|(?:|$))$/;
 const FREE_API = /^\/(?:unlock|session|fulfill|api(?:\/|$)|crypto\/)/;
-const PROTECT = /^\/(?:task|queue|onboarding|detector|trust-safety|earnings)\.html$|^\/js\/(?:tasks|detector)\.js$|^\/data\//;
+const PROTECT = /^\/(?:p|task|queue|onboarding|detector|trust-safety|earnings)\.html$|^\/js\/(?:tasks|detector|workspace|skins|clone)\.js$|^\/data\//;
 /* END-LISTS */
 
 /* The path a browser must use to reach this function, i.e. what a cookie must be scoped to.

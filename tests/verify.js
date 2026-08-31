@@ -52,6 +52,15 @@ function load(url) {
   return { dom, w: dom.window, d: dom.window.document, errs };
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/* "the row exists in the DOM" was NOT the assertion I needed. A stylesheet hiding an ancestor leaves every
+   node queryable, so the queue test stayed green while a real subscriber saw a blank page — the exact bug
+   this project keeps rediscovering when the instrument measures bytes instead of pixels. */
+const shown = (w, el) => {
+  for (let n = el; n && n !== w.document.body; n = n.parentElement) {
+    try { const cs = w.getComputedStyle(n); if (cs.display === 'none' || cs.visibility === 'hidden') return false; } catch (e) { }
+  }
+  return true;
+};
 async function ready(url) {
   const p = load(url);
   for (let i = 0; i < 40; i++) {
@@ -62,7 +71,7 @@ async function ready(url) {
   return p;
 }
 const need = (cond, good, poor) => (cond ? ok(good) : bad(poor));
-const { spawn: spawnX } = require('child_process');
+const { spawn: spawnX, spawnSync } = require('child_process');
 async function startServer(env, tries) {
   for (let t = 0; t < (tries || 6); t++) {
     const port = 4500 + Math.floor(Math.random() * 450);
@@ -85,7 +94,8 @@ function loadKeyed(url, key) {
   const errs = [];
   vc.on('jsdomError', (e) => errs.push('jsdomError: ' + (e.message || e)));
   vc.on('error', (...a) => errs.push('console.error: ' + a.join(' ')));
-  const inject = key ? '<script>try{localStorage.setItem("annotatetrainer:key",' + JSON.stringify(key) +
+  const inject = key ? '<script>try{localStorage.setItem("at_key",' + JSON.stringify(key) +
+    ');localStorage.setItem("annotatetrainer:key",' + JSON.stringify(key) +
     ');localStorage.setItem("annotatetrainer:claim",' + JSON.stringify({ label: 'test buyer', until: '2099-01-01' }) +
     ');document.cookie="at_key=" + encodeURIComponent(' + JSON.stringify(key) + ')}catch(e){}</script>' : '';
   const dom = new JSDOM(html.replace('</head>', inject + '</head>'), {
@@ -139,10 +149,19 @@ async function readyKeyed(url, key) {
 
   console.log('\n\u250c\u2500 queue.html');
   {
-    const { d, errs } = await ready('queue.html');
+    const p2 = await ready('queue.html'); const { d, errs } = p2;
     need(!errs.length, 'scripts run clean', errs.join(' | '));
     const rows = d.querySelectorAll('#tbl tbody tr');
     need(rows.length === 7, '7 tasks listed, integrity probe stays hidden', 'rows=' + rows.length);
+    const { w: wq } = p2;
+    // verify.js has no key in storage, so this visitor's gate is closed: the shell SHOULD still be
+    // hidden, and the fix is that a lock is now visible too.
+    need(shown(wq, d.getElementById('at-lock')), 'a locked visitor sees the lock message, not a blank page',
+      'the overlay is hidden — that was the reported bug');
+    // ...and what it did NOT hide any more. Hiding .shell is the point; hiding body>div is the bug.
+    need(!shown(wq, d.querySelector('.shell')), 'the work itself is still hidden until the key check resolves', 'leaked before unlock');
+    need(!!d.querySelector('.shell'), 'the locked-out markup exists in the DOM (the server, not this script, withholds the paid bytes)', 'shell absent');
+    need(d.documentElement.getAttribute('data-prelock') === '1', 'and the prelock attribute is what is holding it shut', 'no attribute');
     need(txt(d.getElementById('qs')).startsWith('QS'), 'quality chip live: ' + txt(d.getElementById('qs')), 'QS chip dead');
   }
 
@@ -518,8 +537,36 @@ async function readyKeyed(url, key) {
       need((await get('/js/detector.js')).code === 402, 'detector logic withheld the same way', 'detector.js exposed');
       const mk = await get('/js/mockups.js'); const mkBody = await mk.body;
       need(mk.code === 200 && mkBody.length > 3000, 'mockup artwork stays free and intact for the open catalogue pages (' + mkBody.length + ' B)', 'mockups.js ' + mk.code + ' / ' + mkBody.length + ' B');
-      need(/pre-paint lock/.test(fs.readFileSync(path.join(ROOT, 'task.html'), 'utf8')) && /pre-paint lock/.test(fs.readFileSync(path.join(ROOT, 'queue.html'), 'utf8')),
-        'protected pages hide their markup before first paint (no content flash)', 'flash possible');
+    {
+      // Three visitors, and what EACH must see. Asserted on computed visibility, because the previous
+      // version of this check only proved the words "pre-paint lock" existed somewhere in the file —
+      // which a script that hid the entire page satisfied perfectly.
+      const KEY = (fs.existsSync('/home/user/.owner-key') ? fs.readFileSync('/home/user/.owner-key', 'utf8').trim() : '');
+      const gated = ['queue.html', 'task.html', 'detector.html', 'onboarding.html', 'earnings.html', 'trust-safety.html', 'p.html'];
+      const pageSrc = gated.map((f) => fs.readFileSync(path.join(ROOT, f), 'utf8'));
+      need(pageSrc.every((t) => /data-prelock/.test(t) && /body\[data-gated\] \.shell|\.shell/.test(t)),
+        'all ' + gated.length + ' protected pages (the clone page included) toggle data-prelock, hiding .shell only',
+        'no prelock toggle on a page');
+      const cssTxt2 = fs.readFileSync(path.join(ROOT, 'css/app.css'), 'utf8');
+      need(/html\[data-prelock\] body\[data-gated\] \.shell,?\s*\n?[^{]*\.cl-app\{display:none/.test(cssTxt2),
+        'the default-hidden rule lives in CSS and covers .cl-app too, so a clone cannot leak by forgetting to opt in',
+        'not fail-closed / clone not covered');
+      need(!pageSrc.some((t) => /body\[data-gated\]>div/.test(t)),
+        'and none hides body>div, which is what swallowed the unlock overlay along with the page', 'body>div hidden');
+      {
+        const hid = await ready('queue.html?atpre=1');
+        need(!shown(hid.w, hid.d.querySelector('.shell')), '?atpre=1 reproduces the hidden state, so the mechanism is testable', 'hook dead');
+        need(hid.d.querySelectorAll('#tbl tbody tr').length === 7 && shown(hid.w, hid.d.getElementById('app-banner')),
+          'and hiding the work still leaves the banner (the way in) visible', 'banner hidden with it');
+      }
+      const appjs = fs.readFileSync(path.join(ROOT, 'js/app.js'), 'utf8');
+      need(/removeAttribute\('data-prelock'\)/.test(appjs) && /setAttribute\('data-prelock', '1'\)/.test(appjs),
+        'bootGate both sets and clears the flag, so a check in flight cannot leak the page', 'show()/hide() out of sync');
+      const accjs = fs.readFileSync(path.join(ROOT, 'js/access.js'), 'utf8');
+      need(/setItem\('at_key'/.test(accjs), 'Access.set writes the key under the name the head script reads', 'pre-paint and storage disagree on the key name');
+      const cssTxt = fs.readFileSync(path.join(ROOT, 'css/app.css'), 'utf8');
+      need(!/at-locked>div\{display:none/.test(cssTxt), 'the CSS lock rule no longer hides every top-level div', 'still hiding .shell AND the banner AND the overlay');
+    }
       need((await get('/js/app.js')).code === 200, 'the shell still loads so the lock can render', 'shell blocked');
       const rawJs = await fs.readFileSync(path.join(ROOT, 'js/tasks.js'), 'utf8');
       need(rawJs.length > 5000, 'corpus is large enough that leaking it matters (' + Math.round(rawJs.length / 1024) + ' KB)', 'corpus trivial');
@@ -588,18 +635,20 @@ async function readyKeyed(url, key) {
     const fnPub = toRe(grab(fn, 'PUBLIC')), fnPro = toRe(grab(fn, 'PROTECT'));
     const probe = ['/', '/index.html', '/platforms.html', '/platform.html', '/guide.html', '/buy.html', '/gate.html',
       '/css/app.css', '/assets/mockup-squad.svg', '/js/app.js', '/js/storage.js', '/js/mockups.js', '/robots.txt', '/favicon.ico',
-      '/task.html', '/queue.html', '/onboarding.html', '/detector.html', '/trust-safety.html', '/earnings.html',
-      '/js/tasks.js', '/js/detector.js', '/js/access.js', '/data/x.jsonl', '/data/submissions.jsonl',
+      '/task.html', '/queue.html', '/onboarding.html', '/detector.html', '/trust-safety.html', '/earnings.html', '/p.html',
+      '/js/tasks.js', '/js/detector.js', '/js/access.js', '/js/workspace.js', '/js/skins.js', '/js/clone.js',
+      '/data/x.jsonl', '/data/submissions.jsonl',
       '/nope', '/404.html', '/.git/config', '/tools/keygen.js'];
     const free = probe.filter((x) => pubRe.test(x) && !proRe.test(x));
     const gated = probe.filter((x) => proRe.test(x));
     const mustBeFree = ['/', '/index.html', '/platforms.html', '/platform.html', '/guide.html', '/buy.html', '/gate.html',
       '/css/app.css', '/assets/mockup-squad.svg', '/js/app.js', '/js/storage.js', '/js/mockups.js', '/robots.txt', '/favicon.ico', '/js/access.js'];
     const mustBeGated = ['/task.html', '/queue.html', '/onboarding.html', '/detector.html', '/trust-safety.html', '/earnings.html',
-      '/js/tasks.js', '/js/detector.js', '/data/x.jsonl', '/data/submissions.jsonl'];
+      '/p.html', '/js/tasks.js', '/js/detector.js', '/js/workspace.js', '/js/skins.js', '/js/clone.js',
+      '/data/x.jsonl', '/data/submissions.jsonl'];
     const mustNotLeak = ['/nope', '/404.html', '/.git/config', '/tools/keygen.js'];   /* `/` is free on purpose */
     need(mustBeFree.every((x) => free.indexOf(x) >= 0), 'exactly the ' + mustBeFree.length + ' intended paths stay free to the world', 'wrongly locked: ' + mustBeFree.filter((x) => free.indexOf(x) < 0).join(' '));
-    need(mustBeGated.every((x) => gated.indexOf(x) >= 0) && gated.length === 10, 'and exactly the ' + mustBeGated.length + ' payload paths are withheld', 'wrongly free: ' + gated.join(' '));
+    need(mustBeGated.every((x) => gated.indexOf(x) >= 0) && gated.length === mustBeGated.length, 'and exactly the ' + mustBeGated.length + ' payload paths are withheld', 'wrongly free: ' + gated.join(' '));
     need(mustNotLeak.every((x) => !pubRe.test(x) && !proRe.test(x)),
       'unknown/absent paths match neither list, so they fall through to the 404 handler (never an allow-list widening)',
       'misclassified: ' + mustNotLeak.filter((x) => pubRe.test(x) || proRe.test(x)).join(' '));
@@ -616,6 +665,29 @@ async function readyKeyed(url, key) {
         'edge function and server agree on every path (no drift)', 'server and edge disagree');
       need(!fnPub.test('/task.html'), 'edge function cannot be bypassed by the catch-all bug', 'edge leak');
     }
+  }
+
+  console.log('\n\u250c\u2500 platform clones (tests/clone-ui.js, run as a child)');
+  {
+    /* The clone suite is a child process rather than a re-implementation here on purpose: a copy of the
+       checks would pass while the real clone stayed broken, which is the exact failure that hid the blank
+       queue. Anything that stops clone-ui.js from running must stop `verify` from going green. */
+    const r = spawnSync(process.execPath, [path.join(__dirname, 'clone-ui.js')],
+      { cwd: ROOT, encoding: 'utf8', timeout: 240000, env: Object.assign({}, process.env, { NODE_PATH: '/home/user/.testdeps/node_modules' }) });
+    const out = (r.stdout || '') + (r.stderr || '');
+    const checks = (out.match(/\u2713/g) || []).length;
+    need(r.status === 0 && checks >= 30 && !/\u2717/.test(out),
+      'clone suite: ' + checks + ' checks, every skin boots, grading matches the shared engine, payout disabled',
+      'clone suite failed (exit ' + r.status + ', ' + checks + ' passed)\n' + out.split('\n').filter((l) => l.includes('\u2717')).slice(0, 6).join('\n'));
+    const srcs = ['p.html', 'js/skins.js', 'js/clone.js', 'css/clones.css', 'js/workspace.js'];
+    need(srcs.every((f) => fs.existsSync(path.join(ROOT, f))), 'clone parts exist (' + srcs.join(', ') + ')', 'missing a clone file');
+    const task = fs.readFileSync(path.join(ROOT, 'task.html'), 'utf8');
+    need(/Workspace\.build\(\)/.test(task) && task.length < 3000,
+      'task.html and the clones mount the SAME workspace (task.html is now a ' + task.length + '-byte shell over js/workspace.js)',
+      'the workspace was forked, not shared — clones would drift within a commit');
+    const pj = fs.readFileSync(path.join(ROOT, 'js/workspace.js'), 'utf8');
+    need(!/vercel\.app|supabase\.co|localhost:/.test(pj) && /__wsMount/.test(pj) && /__wsChrome/.test(pj),
+      'the shared workspace takes chrome + mount from the host page and hard-codes no origin', 'not host-neutral');
   }
 
   console.log('\n\u250c\u2500 supabase backend (optional key store)');

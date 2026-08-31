@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en" data-prelock="1">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Outlier — Projects · AnnotateTrainer practice copy</title>
+<link rel="stylesheet" href="css/app.css">
+<link rel="stylesheet" href="css/clones.css">
+<script>/* pre-paint lock — same single mechanism as every gated page (see css/app.css and App.bootGate):
+   the rule that hides lives in CSS and is keyed off this attribute; a valid stored key removes it, and
+   App.bootGate removes it again once the server has agreed. ?atpre=1 re-hides for the test suites.
+   It hides .shell AND .cl-app: on a clone, the imitation IS the content, so showing it unverified would
+   hand the paid corpus to anyone who guessed the URL. #app-banner and #at-lock sit outside both, so an
+   unkeyed visitor always sees the lock and the way in — never a blank page. */(function(){var d=document.documentElement;var k='';try{k=localStorage.getItem('at_key')||''}catch(e){}var ok=/^[A-Za-z0-9]{6,10}\.[A-Za-z0-9_\-]{20,}\.[0-9]{10,13}$/.test(k)&&Number(String(k).split('.')[2])>=Date.now();var force=/[?&]atpre=1/.test(location.search);if(ok&&!force){d.removeAttribute('data-prelock')}else{d.setAttribute('data-prelock','1')}})();
+   /* the palette is applied before paint because the page picks its own skin: ?p=chooses which clone,
+      and drawing the chrome and then re-tinting it is a visible flash on a slow connection */
+   (function(){var q=new URLSearchParams(location.search),id=q.get('p')||'outlier';var SK={outlier:['#0a0d11','#14181f','#ff5c1f','#ff7a45'],handshake:['#080d16','#101725','#1f5fd6','#4c8dff'],rws:['#101014','#1a1a20','#d92a2a','#ff6b6b'],alignerr:['#0b0a14','#15131f','#7b4dff','#a68bff'],dataannotation:['#f6f7f9','#ffffff','#2f6df6','#2f6df6'],mercor:['#0d0d0f','#17171b','#2ad07b','#5ce49f'],mindrift:['#0a0f1a','#131a28','#4cc9f0','#7fdcf7'],appen:['#0f1319','#181e27','#f47b20','#ff9a4d'],toloka:['#0e1116','#171c24','#5c40e8','#8a74ff'],pareto:['#0b0d12','#141822','#e6b03c','#f2c961'],prolific:['#0d1017','#161b25','#00b8a2','#3fd5c2'],telus:['#0f1217','#191d24','#00b2a9','#42d3cb']};var v=SK[id]||SK.outlier,r=document.documentElement.style;r.setProperty('--cl-bg',v[0]);r.setProperty('--cl-card',v[1]);r.setProperty('--cl-accent',v[2]);r.setProperty('--cl-accent2',v[3]);r.setProperty('--cl-body-bg',v[0]);})();</script>
+</head>
+<body data-gated class="cl-body">
+<div id="app-banner"></div>
+<div class="cl-app" id="cl-app"></div>
+
+<script src="js/storage.js"></script>
+<script src="js/access.js"></script>
+<script src="js/detector.js"></script>
+<script src="js/tasks.js"></script>
+<script src="js/platforms.js"></script>
+<script src="js/skins.js"></script>
+<script src="js/app.js"></script>
+<script src="js/workspace.js"></script>
+<script src="js/clone.js"></script>
+<script>
+/* The clone page is one file for twelve platforms. What changes between them is a row in js/skins.js, not
+   a page — which is the only reason "make all of them look like the original" is an honest promise rather
+   than twelve forks that drift apart. */
+function boot() {
+  var id = new URLSearchParams(location.search).get('p') || 'outlier';
+  var ok = ['outlier','handshake','rws','alignerr','dataannotation','mercor','mindrift','appen','toloka','pareto','prolific','telus'];
+  if (ok.indexOf(id) < 0) id = 'outlier';       /* a mistyped ?p= draws the default skin, not a broken page */
+  Clone.start(id);
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+</script>
+</body>
+</html>

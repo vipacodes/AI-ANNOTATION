@@ -14,8 +14,12 @@ onboarding.html
 detector.html
 trust-safety.html
 earnings.html
+p.html
 js/tasks.js
 js/detector.js
+js/workspace.js
+js/skins.js
+js/clone.js
 
 # the lock screen itself: it is the one page a crawler must not index as free content, and the gate
 # serves deploy/gate-fallback.html in its place, so it costs nothing to leave it out

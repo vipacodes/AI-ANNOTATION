@@ -1,0 +1,146 @@
+/* Platform clone chrome — one stylesheet per skin family, so the trainer's own css/app.css stays
+   untouched and a clone can be switched off without leaving residue.
+
+   Why a separate file: a clone has to look like ANOTHER PRODUCT. If its colours lived in the shared token
+   block, every page would drift with it, and the drift is exactly what tells a user "this is still the
+   trainer". Isolation is the point. */
+
+:root {
+  --cl-bg: #0a0d11; --cl-card: #14181f; --cl-card2: #191e26; --cl-line: #232a35;
+  --cl-txt: #f2f5f9; --cl-dim: #8b98ab; --cl-accent: #ff5c1f; --cl-accent2: #ff7a45;
+  --cl-ok: #34c98a; --cl-warn: #f5b13d; --cl-bad: #ff5f6d;
+  --cl-radius: 14px; --cl-font: Inter, "Inter var", "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+html.cl-body { background: var(--cl-bg); color: var(--cl-txt); font: 15px/1.55 var(--cl-font); margin: 0; }
+/* The real product fills the viewport with a soft radial glow behind the cards; flat black reads as a mock. */
+html.cl-body::before {
+  content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background: radial-gradient(900px 420px at 88% -8%, rgba(38, 94, 96, .30), transparent 70%),
+              radial-gradient(700px 380px at -6% 8%, rgba(70, 46, 120, .18), transparent 70%);
+}
+.cl-app { position: relative; z-index: 1; max-width: 1180px; margin: 0 auto; padding: 0 20px 64px; }
+
+/* ---------- banner above the header, exactly where the product puts its queue hint ---------- */
+.cl-queuehint { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: #cfd8e4; padding: 9px 2px; }
+.cl-queuehint b { color: var(--cl-txt); font-weight: 600; }
+.cl-queuehint .chev { color: var(--cl-accent2); }
+
+/* ---------- header ---------- */
+.cl-head { display: flex; align-items: center; gap: 26px; padding: 14px 0 16px; border-bottom: 1px solid var(--cl-line); }
+.cl-logo { display: flex; align-items: center; gap: 10px; font-weight: 750; letter-spacing: .2px; font-size: 18px; }
+.cl-mark { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; color: #0a0d11; font-weight: 850; font-size: 15px;
+  background: linear-gradient(150deg, var(--cl-accent2), var(--cl-accent)); box-shadow: 0 0 0 1px rgba(255,255,255,.06) inset; }
+.cl-nav { display: flex; gap: 4px; margin-left: 8px; }
+.cl-nav button { background: none; border: 0; color: var(--cl-dim); font: 600 13.5px var(--cl-font); padding: 8px 12px; border-radius: 9px; cursor: pointer; }
+.cl-nav button:hover { color: var(--cl-txt); background: rgba(255,255,255,.04); }
+.cl-nav button[aria-current="true"] { color: var(--cl-txt); background: rgba(255,255,255,.07); }
+.cl-acct { margin-left: auto; display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--cl-dim); }
+.cl-avatar { width: 28px; height: 28px; border-radius: 50%; background: #2a3340; display: grid; place-items: center; color: #cfd8e4; font-size: 11px; font-weight: 700; }
+
+/* ---------- generic card + the circular grey icon the product uses for every section heading ---------- */
+.cl-card { background: var(--cl-card); border: 1px solid var(--cl-line); border-radius: var(--cl-radius); padding: 20px 22px; margin: 18px 0; }
+.cl-card.tight { padding: 16px 18px; }
+.cl-h { display: flex; align-items: center; gap: 12px; margin: 0 0 16px; font-size: 19px; font-weight: 700; }
+.cl-ic { width: 30px; height: 30px; border-radius: 50%; background: #2b323c; display: grid; place-items: center; flex: 0 0 auto; }
+.cl-ic svg { width: 15px; height: 15px; stroke: #d8e0ea; fill: none; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+
+.cl-stats { display: flex; flex-wrap: wrap; gap: 40px; }
+.cl-stat { min-width: 180px; }
+.cl-stat .k { font-size: 13px; color: var(--cl-dim); margin-bottom: 2px; }
+.cl-stat .v { font-size: 25px; font-weight: 750; letter-spacing: -.01em; }
+.cl-stat .s { font-size: 12.5px; color: var(--cl-dim); margin-top: 3px; }
+.cl-stat .v .u { font-size: 12.5px; font-weight: 500; color: var(--cl-dim); margin-left: 4px; }
+.cl-hr { border: 0; border-top: 1px solid var(--cl-line); margin: 18px 0; }
+.cl-links { display: flex; gap: 46px; flex-wrap: wrap; }
+.cl-link { background: none; border: 0; padding: 0; color: var(--cl-accent2); font: 600 13px var(--cl-font); cursor: pointer; display: inline-flex; align-items: center; gap: 5px; }
+.cl-link:hover { text-decoration: underline; }
+.cl-link[disabled] { color: #6d7c92; cursor: not-allowed; text-decoration: none; }
+.cl-info { display: inline-grid; place-items: center; width: 14px; height: 14px; border-radius: 50%; border: 1px solid #55627a; color: #93a0b4; font-size: 9px; font-style: normal; cursor: help; }
+
+/* ---------- buttons ---------- */
+.cl-btn { background: var(--cl-accent); color: #12100e; border: 0; border-radius: 10px; padding: 11px 18px; font: 700 13.5px var(--cl-font); cursor: pointer; letter-spacing: .01em; }
+.cl-btn:hover { filter: brightness(1.06); }
+.cl-btn.ghost { background: transparent; color: var(--cl-txt); border: 1px solid var(--cl-line); }
+.cl-btn[disabled] { background: #2b323c; color: #8b98ab; cursor: not-allowed; filter: none; }
+.cl-btn.sm { padding: 7px 12px; font-size: 12.5px; border-radius: 8px; }
+
+/* ---------- project list ---------- */
+.cl-proj { display: grid; grid-template-columns: 1fr auto; gap: 18px; align-items: center; padding: 15px 0; border-bottom: 1px solid var(--cl-line); }
+.cl-proj:last-child { border-bottom: 0; }
+.cl-proj .t { font-weight: 650; font-size: 15px; }
+.cl-proj .m { font-size: 12.5px; color: var(--cl-dim); margin-top: 3px; }
+.cl-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 650; padding: 4px 9px; border-radius: 999px; border: 1px solid var(--cl-line); color: var(--cl-dim); }
+.cl-pill.ok { color: var(--cl-ok); border-color: rgba(52,201,138,.35); background: rgba(52,201,138,.08); }
+.cl-pill.warn { color: var(--cl-warn); border-color: rgba(245,177,61,.3); background: rgba(245,177,61,.07); }
+.cl-pill.bad { color: var(--cl-bad); border-color: rgba(255,95,109,.3); background: rgba(255,95,109,.07); }
+.cl-pill.accent { color: var(--cl-accent2); border-color: rgba(255,122,69,.35); background: rgba(255,122,69,.08); }
+
+/* ---------- the editor ---------- */
+.cl-grid { display: grid; gap: 18px; }
+.cl-grid.two { grid-template-columns: 1.15fr .85fr; }
+@media (max-width: 940px) { .cl-grid.two { grid-template-columns: 1fr; } .cl-stats { gap: 22px; } }
+.cl-brief { background: var(--cl-card2); border: 1px solid var(--cl-line); border-radius: 12px; padding: 14px 16px; font-size: 13.5px; color: #d6deea; }
+.cl-prompt { border: 1px solid var(--cl-line); border-radius: 12px; padding: 14px 16px; background: #10141a; font-size: 14px; }
+.cl-ta { width: 100%; box-sizing: border-box; min-height: 190px; resize: vertical; background: #10141a; color: var(--cl-txt); border: 1px solid var(--cl-line);
+  border-radius: 12px; padding: 13px 15px; font: 14px/1.65 var(--cl-font); }
+.cl-ta:focus { outline: 0; border-color: rgba(255,122,69,.5); box-shadow: 0 0 0 3px rgba(255,92,31,.12); }
+.cl-line { display: flex; gap: 11px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--cl-line); border-radius: 10px; margin-bottom: 8px; cursor: pointer; background: #10141a; }
+.cl-line:hover { border-color: #35415a; }
+.cl-line[data-sel="1"] { border-color: rgba(255,122,69,.55); background: rgba(255,92,31,.07); }
+.cl-line .n { font: 600 11px var(--cl-font); color: var(--cl-dim); padding-top: 2px; min-width: 22px; }
+.cl-line .x { font-size: 13.5px; color: #dbe3ee; }
+.cl-foot { position: sticky; bottom: 0; display: flex; align-items: center; gap: 12px; padding: 12px 0 0; margin-top: 4px;
+  background: linear-gradient(to top, var(--cl-bg) 62%, rgba(10,13,17,0)); }
+.cl-timer { font: 650 13px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--cl-dim); }
+.cl-timer[data-warn="1"] { color: var(--cl-warn); }
+.cl-count { font-size: 12.5px; color: var(--cl-dim); }
+.cl-verdict { border-radius: 12px; padding: 14px 16px; margin-top: 14px; border: 1px solid var(--cl-line); background: var(--cl-card2); }
+.cl-verdict .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.cl-verdict .score { font-size: 22px; font-weight: 750; }
+.cl-bar { height: 6px; border-radius: 99px; background: #232a35; overflow: hidden; margin: 10px 0 12px; }
+.cl-bar i { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, #1fa86a, #39d98a); }
+.cl-bar[data-band="warn"] i { background: linear-gradient(90deg,#8a6620,#f5b13d); }
+.cl-bar[data-band="bad"] i { background: linear-gradient(90deg,#a3323e,#ff5f6d); }
+.cl-rub { font-size: 12.5px; }
+.cl-rub div { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-top: 1px solid var(--cl-line); color: #cfd8e4; }
+.cl-rub div b { color: var(--cl-txt); }
+.cl-notice { display: flex; gap: 10px; align-items: flex-start; border: 1px dashed rgba(255,122,69,.4); background: rgba(255,92,31,.06);
+  border-radius: 12px; padding: 12px 14px; font-size: 12.5px; color: #e5d6cd; }
+.cl-notice .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--cl-accent2); margin-top: 5px; flex: 0 0 auto; }
+.cl-return { font-size: 12px; color: #7f8ea4; }
+.cl-return a { color: var(--cl-accent2); text-decoration: none; }
+.cl-return a:hover { text-decoration: underline; }
+
+/* ---------- the borrowed workspace ----------
+   The clone does NOT re-implement the task editor: js/workspace.js draws the real one into .cl-scope.
+   Which means theming it has to happen through the trainer's own tokens, and nothing else — if a clone
+   got its own copy of the editor's CSS, the two would drift and the clone would start teaching a slightly
+   different product. Redefining the tokens on the subtree re-skins every rule in css/app.css that reads
+   them, and the handful of flat colours below are only the rules that hard-code one. The data-attribute
+   palette on the root feeds these, so a new skin needs no CSS at all. */
+.cl-scope {
+  --bg: var(--cl-bg); --bg2: var(--cl-bg); --panel: var(--cl-card); --panel2: var(--cl-card2);
+  --line: var(--cl-line); --line2: #38425a; --txt: var(--cl-txt); --dim: var(--cl-dim); --dim2: #7f8ea4;
+  --violet: var(--cl-accent2); --violet-d: var(--cl-accent);
+  --ok: var(--cl-ok); --warn: var(--cl-warn); --bad: var(--cl-bad); --info: #66c6e8;
+  --sans: var(--cl-font); --r: 12px;
+  color: var(--txt); font-family: var(--sans);
+}
+.cl-scope .btn { color: #12100e; border-color: transparent; background: var(--cl-accent); }
+.cl-scope .btn:hover { filter: brightness(1.07); }
+.cl-scope .btn.ghost { background: transparent; color: var(--txt); border-color: var(--line); }
+.cl-scope .btn.ghost:hover { background: var(--cl-card2); }
+.cl-scope .btn.ok { background: var(--cl-ok); border-color: transparent; color: #07130d; }
+.cl-scope a { color: var(--cl-accent2); }
+.cl-scope .prompt { background: #10141a; border-left-color: var(--cl-accent); }
+.cl-scope textarea, .cl-scope input[type=text] { background: #10141a; color: var(--txt); border: 1px solid var(--line); }
+.cl-scope textarea:focus { border-color: var(--cl-accent2); outline: 0; box-shadow: 0 0 0 3px rgba(255, 92, 31, .12); }
+.cl-scope .bar > i { background: linear-gradient(90deg, var(--cl-accent), var(--cl-accent2)); }
+.cl-scope .bar > i.ok { background: linear-gradient(90deg, #1fa86a, var(--cl-ok)); }
+.cl-scope .bar > i.bad { background: linear-gradient(90deg, #a3323e, var(--cl-bad)); }
+.cl-scope .side-note { color: var(--cl-dim); }
+/* light-skinned products (DataAnnotation is a white app) would otherwise keep the dark form fields */
+.cl-scope[data-light="1"] textarea, .cl-scope[data-light="1"] input[type=text] { background: #f7f8fa; color: #161a22; border-color: #dfe3ea; }
+.cl-scope[data-light="1"] .prompt { background: #ffffff; color: #161a22; border-color: #dfe3ea; }
+.cl-scope[data-light="1"] .btn { color: #fff; }

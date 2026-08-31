@@ -67,7 +67,7 @@ function cookies(req) {
 const PUBLIC = /^\/(?:(?:index|gate|buy|guide|platforms|platform)\.html|[A-Z][A-Za-z]*\.md|deploy\/[\w.-]+\.md|(?:css|assets|api|\.well-known)\/[^/]*(?:\/[^/]*)*|js\/(?:storage|access|app|platforms|mockups|crypto)\.js|robots\.txt|sitemap\.xml|favicon\.ico|(?:|$))$/;
 function isPublic(p) { return PUBLIC.test(p); }/* Behind the key: the graded corpus and the pages that render it. The *content* is the product,
    so the task data files are withheld too — locked requests get an empty stub instead. */
-const PROTECT = /^\/(?:task|queue|onboarding|detector|trust-safety|earnings)\.html$|^\/js\/(?:tasks|detector)\.js$|^\/data\//;
+const PROTECT = /^\/(?:p|task|queue|onboarding|detector|trust-safety|earnings)\.html$|^\/js\/(?:tasks|detector|workspace|skins|clone)\.js$|^\/data\//;
 
 /* The lock screen, rendered. gate.html carries a sentinel instead of a path, because a hard-coded
    "back to the shop" link sends a subscriber to the home page after they have just paid for the

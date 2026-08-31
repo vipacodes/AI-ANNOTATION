@@ -34,11 +34,27 @@ It also includes:
   pages *and* the corpus JS (`/js/tasks.js` returns a 94-byte stub, not the tasks) until a
   valid key presents itself. See **`DEPLOY.md`** for publishing it and taking money.
 
+- **`p.html` + `js/skins.js` + `js/clone.js` + `css/clones.css`** — the **platform clones**. One page,
+  twelve skins: `p.html?p=outlier` draws the Outlier project dashboard (stat block, deliverable and
+  assessment rate, assessment status, project list), its task workspace and its earnings ledger; the other
+  eleven ids re-skin the same three views with that product's palette, wordmark, nav labels and payout
+  wording. Chrome is *data* — a new platform is a row in `js/skins.js`, never a forked page — but the work
+  inside it is the real thing: the clone mounts `js/workspace.js`, so grading, the rubric reveal, the
+  paste/typing telemetry and the ledger write run from the same code the paid workspace runs. **The one
+  functional difference: you cannot earn or withdraw.** Real rates and a running balance stay visible
+  because they are the lesson; the payout control is rendered, greyed, and labelled *"Withdrawal
+  disabled"*, because a clone that asked for a bank or PayPal handle would be a phishing page.
+
+
 ## What this deliberately is not
 
-1. **Not a clone of any real platform.** No Outlier/Handshake/RWS/Scale logos, marks,
-   screenshots, or copy, and no attempt to pass as one. Brand-impersonating versions of
-   this exact site are the standard prop in "AI trainer onboarding" fee-scam operations.
+1. **Not a job, not a hiring channel, and not a way to pretend you were hired.** `p.html`
+   reproduces a real product's chrome on the owner's explicit instruction, so the labels that
+   make it a *practice copy* are load-bearing, not decoration: the `Practice account.` strip on
+   every view, the disabled payout control, and the "would have earned" phrasing on the ledger.
+   They must survive every future edit to a clone. Brand-impersonating versions of this kind of
+   site are the standard prop in "AI trainer onboarding" fee-scam operations — this one never
+   asks for a payment detail, a document, or an email.
 2. **No fake earnings, no fake payout screenshots, no fabricated trust badges.** Those
    exist here only as a labelled counter-example inside `guide.html`.
 3. **No impersonation of a verifier.** You cannot use this site to prove to somebody that
@@ -147,15 +163,18 @@ Three things to know if you read or extend the SQL, because each one cost a real
 
 ```bash
 npm i --prefix ~/.testdeps jsdom   # one-time, outside the repo (keeps this repo dependency-free)
-node tests/verify.js               # 258 assertions; needs jsdom, resolved from that prefix
+node tests/verify.js               # 311 assertions (runs the clone suite as a child); jsdom from that prefix
+node tests/clone-ui.js             # the platform clones alone: 60 checks of chrome, visibility, shared
+                                   # grading and the disabled payout, driven in jsdom as a paid visitor
 ```
 
 It loads every page headlessly, clicks through the real UI (answers the assessment, assigns
 rankings, selects code lines, submits), and asserts that the rubric actually discriminates:
 gold submissions score >=95-100, lazy submissions score <70, the hidden integrity probe only
 passes when you flag it, storage persists across pages, and the boundary checks below hold
-(no brand assets, no fabricated earnings, no ID collection; money only ever moves through a
-hosted checkout link you wire up yourself).
+(no fabricated earnings, no ID collection, no credential that could be shown to an employer; money
+only ever moves through a hosted checkout link you wire up yourself). The clone suite checks the
+other side of the same line: that `p.html` paints the product's own chrome and still refuses to pay.
 
 The paywall gets the same treatment: the harness boots `server.js` on a random free port, mints
 a key with `tools/keygen.js`, and asserts the real HTTP behaviour — 402 + gate screen for

@@ -1,11 +1,11 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-prelock="1">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>AI-tells detector — AnnotateTrainer</title>
 <link rel="stylesheet" href="css/app.css">
-<script>/* pre-paint lock: never flash protected content */(function(){var k="";try{k=localStorage.getItem("at_key")||""}catch(e){}var okk=/^[A-Za-z0-9]{6,10}\.[A-Za-z0-9_\-]{20,}\.[0-9]{10,13}$/.test(k)&&Number(String(k).split(".")[2])>=Date.now();if(!okk)document.write('<style>body[data-gated]>div{display:none!important}</style>')})();</script>
+<script>/* pre-paint lock. Default-hidden lives in css/app.css (body[data-gated][data-prelock] .shell); this script REVEALS when the stored key is present and unexpired. It used to document.write a body>div{display:none} rule, which (a) also hid the unlock overlay and the banner, leaving a subscriber on a blank page with no way in, (b) read a localStorage key nothing wrote, and (c) could not be seen by any test harness. Attribute toggling is checkable in jsdom and reversible by id. */(function(){var d=document.documentElement;var k='';try{k=localStorage.getItem('at_key')||''}catch(e){}var ok=/^[A-Za-z0-9]{6,10}\.[A-Za-z0-9_\-]{20,}\.[0-9]{10,13}$/.test(k)&&Number(String(k).split('.')[2])>=Date.now();var force=/[?&]atpre=1/.test(location.search);/* test hook: re-hides on demand so a suite can watch App.bootGate lift it */if(ok&&!force){d.removeAttribute('data-prelock')}else{d.setAttribute('data-prelock','1')}})();</script>
 </head>
 <body data-gated>
 <div id="app-banner"></div>
