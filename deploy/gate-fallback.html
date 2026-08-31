@@ -32,7 +32,7 @@ a{color:#8b7cff}
 var __GATE_TARGET=/*@@GATE_PATH@@*/'';
 var go=function(){var k=document.getElementById('k').value.trim();var m=document.getElementById('m');
 m.textContent='checking\u2026';
-fetch('/unlock',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({key:k})})
+fetch('unlock',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({key:k})})
 .then(function(r){return r.json().then(function(j){return{c:r.status,j:j}})})
 .then(function(r){m.style.color=r.c===200?'#57d38b':'#ff6b6b';
 m.textContent=r.c===200?('Accepted - '+(r.j.label||'')+', valid until '+(r.j.until||'')):(r.j.error||'Key rejected.');

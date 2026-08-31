@@ -103,11 +103,16 @@ const md5 = (b) => crypto.createHash('md5').update(b).digest('hex');
       // cries wolf is worse than none, since the response is to ignore it.
       const want = md5(buf);
       let okBack = false, seen = null;
-      for (let t = 0; t < 4 && !okBack; t++) {
+      // The wait between attempts is the assertion, not a courtesy: a replaced object keeps serving the
+      // PREVIOUS bytes for seconds after a 200, so a tight 4x300 ms loop reported "the bucket never served
+      // my bytes" for three files that were in fact correct a minute later — and, worse, the diagnosis you
+      // take from that message is "storage is broken", which sent me probing the whole project for a
+      // frozen bucket before I checked the size and found my 4 new bytes already there.
+      for (let t = 0; t < 8 && !okBack; t++) {
         const back = await project('/storage/v1/object/authenticated/' + BUCKET + '/' + f.rel, { method: 'GET', raw: true });
         seen = back.buffer ? back.buffer.length + ' bytes, ' + md5(back.buffer) : 'status ' + back.status;
         okBack = back.status === 200 && !!back.buffer && md5(back.buffer) === want;
-        if (!okBack) await new Promise((r) => setTimeout(r, 300));
+        if (!okBack) await new Promise((r) => setTimeout(r, 1200 * (t + 1)));   // ~0→20 s, the observed propagation window
       }
       if (!okBack) { bad++; A.ok(f.rel + ' uploaded but the bucket never served my bytes (' + seen + ' vs ' + want + ')', false); }
       else up++;

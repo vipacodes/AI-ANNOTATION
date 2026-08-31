@@ -18,6 +18,11 @@
   var KEY = 'annotatetrainer:key';
   var CLAIM = 'annotatetrainer:claim';
   var RE = /^[A-Za-z0-9]{6,10}\.[A-Za-z0-9_\-]{20,}\.([0-9]{10,13})$/;
+  /* Where the API lives, derived rather than assumed. '/unlock' is a 404 under a sub-path mount — the
+     Supabase function serves the site from /functions/v1/annotate/, and a root-absolute fetch there lands
+     on the project root. Every page of this site sits at the mount root, so stripping the filename from
+     location.pathname is exact for all of them, needs no config, and changes nothing at '/'. */
+  var BASE = String(location.pathname || '/').replace(/[^/]*$/, '');
 
   function hasShape(k) { return RE.test(String(k || '').trim()); }
 
@@ -45,7 +50,7 @@
       if (!hasShape(k)) return cb(false, { reason: 'malformed key' });
       // ask the server, if there is one
       var x = new XMLHttpRequest();
-      x.open('GET', '/session', true);
+      x.open('GET', BASE + 'session', true);
       x.withCredentials = true;
       x.timeout = 2500;
       x.onload = function () {
@@ -69,7 +74,7 @@
       if (!hasShape(k)) return cb(false, 'That key is not in the right shape. Keys look like XXXXX-yyyyyy-1700000000000 (issued by tools/keygen.js).');
       var body = JSON.stringify({ key: k });
       var x = new XMLHttpRequest();
-      x.open('POST', '/unlock', true);
+      x.open('POST', BASE + 'unlock', true);
       x.setRequestHeader('content-type', 'application/json');
       x.setRequestHeader('x-test-key', k);   /* harmless; lets a headless test see which key went out */
       x.timeout = 3000;

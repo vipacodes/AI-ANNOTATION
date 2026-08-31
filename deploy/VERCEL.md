@@ -38,6 +38,16 @@ Vercel notes for this repository. Read the first section before you click Deploy
        lock screen it renders. `?notice=0` turns it off for a human who wants the raw source.
      - the link is the URL verbatim. encodeURIComponent over a whole URL percent-encodes the scheme and
        produces a dead link, on the one page whose job is "click here instead".
+
+   Client routes are page-RELATIVE, never root-absolute, in js/access.js, js/crypto.js and both embedded
+   lock screens. '/unlock' is correct at '/' and a 404 at /functions/v1/annotate/, and a buyer on that URL
+   would have found a pay button that does nothing and an unlock form that says "Key rejected." tests/
+   live-buyer-flow.js asserts the convention (it is a 4-line check that would have caught a day of work)
+   and then WALKS both hosts: it loads each live page in jsdom, clicks the real buttons, and fails if a
+   quote does not appear, if a key does not unlock, or if a graded submission shows no score. That suite is
+   the one to run after any change to the gate, because it is the only one that asks "could a person pay
+   me, and could a subscriber read the thing they bought?"
+
    Change where it points:  supabase functions secrets -r <ref> RENDER_URL=https://your-domain
    Confirm which build answered:  curl -s <fn-url>/api/health   ->  {"build":"annotate-..."}
 

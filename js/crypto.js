@@ -11,6 +11,13 @@
   var go = $('ltc-go'), box = $('ltc-box'), planSel = $('ltc-plan'), emailIn = $('ltc-email');
   if (!go || !box) return;                                   // page without the crypto panel
 
+  /* Root-absolute URLs only work where the site is mounted at '/'. This site is also served from
+     /functions/v1/annotate/, where '/crypto/quote' lands on the Supabase project root and answers 404 —
+     so the pay panel looked wired-up and silently did nothing there. One derivation from the page's own
+     path, correct at the root AND under a mount, with no config and no build step. */
+  var apiBase = String(location.pathname || '/').replace(/[^/]*$/, '');
+  function at(u) { return apiBase + String(u).replace(/^\/+/, ''); }
+
   var STORE = 'at.crypto';
   var poll = null, deadline = 0;
 
@@ -36,7 +43,7 @@
     // Every call resolves to {code, j}: a body that is not JSON (a proxy's 502 page, an HTML error
     // from a CDN) is turned into an error the UI can show, because fetch only rejects on a network
     // failure and a buyer staring at a silent box is the outcome being avoided.
-    return fetch(route, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+    return fetch(at(route), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
       .then(function (r) {
         return r.json().then(
           function (j) { return { code: r.status, j: j }; },
@@ -139,7 +146,7 @@
   function startPolling(q) {
     stopPolling();
     var probe = function () {
-      api('crypto/status', { id: q.id, token: q.token }).then(function (r) {
+      api('/crypto/status', { id: q.id, token: q.token }).then(function (r) {
         if (r.code === 404) { stopPolling(); line((r.j && r.j.error) || 'This order is closed.', 'bad'); return; }
         var v = r.j || {};
         if (v.status === 'paid') { renderPaid(v); return; }
@@ -157,7 +164,7 @@
 
   go.onclick = function () {
     go.disabled = true; go.textContent = 'Pricing\u2026';
-    api('crypto/quote', { plan: planSel.value, email: (emailIn && emailIn.value || '').trim() }).then(function (r) {
+    api('/crypto/quote', { plan: planSel.value, email: (emailIn && emailIn.value || '').trim() }).then(function (r) {
       go.disabled = false; go.textContent = 'Get a Litecoin amount';
       if (r.code !== 200) { box.style.display = 'block'; line((r.j && r.j.error) || 'Could not open an order.', 'bad'); return; }
       save(r.j); renderQuote(r.j);
@@ -168,7 +175,7 @@
     var q = load();
     if (!q || !q.id) { line('I do not have an order in this browser to attach that txid to. Get an amount first.', 'bad'); return; }
     claim.disabled = true;
-    api('crypto/claim', { id: q.id, token: q.token, txid: ($('ltc-txid').value || '').trim() }).then(function (r) {
+    api('/crypto/claim', { id: q.id, token: q.token, txid: ($('ltc-txid').value || '').trim() }).then(function (r) {
       claim.disabled = false;
       if (r.code === 200 && r.j.status === 'paid') { renderPaid(r.j); return; }
       if (r.code === 200 && r.j.status === 'seen') { line('Matched \u2014 ' + r.j.confirmations + ' of ' + r.j.min_confs + ' confirmations. It will unlock itself.', 'ok'); return; }
@@ -179,7 +186,7 @@
   if (existing && existing.id && existing.token) {
     // Re-attaching to a known order is not a payment and must not look like one, so the amount is
     // re-read from the server rather than trusted from what we wrote in the fragment.
-    api('crypto/status', { id: existing.id, token: existing.token }).then(function (r) {
+    api('/crypto/status', { id: existing.id, token: existing.token }).then(function (r) {
       if (r.code !== 200) { clear(); return; }
       if (r.j.status === 'paid') { box.style.display = 'block'; renderQuoteFrom(r.j, existing); return; }
       resume(r.j, existing);
