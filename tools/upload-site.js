@@ -37,13 +37,19 @@ function collect() {
   // crawler got a 404 for it — while the manifest check below passed, because it only counted the files
   // this function chose to look at. A deployer's checklist must not be able to grade its own blind spot.
   for (const f of fs.readdirSync(ROOT).sort()) {
-    if (f.endsWith('.html') || ROOT_EXTRA.indexOf(f) >= 0) out.push({ abs: path.join(ROOT, f), rel: f });
+    // .md too: buy.html links DEPLOY.md, and a link in a buyer-facing page that 404s is a defect even
+    // when the file is sitting in the repo. Only the four root docs and deploy/*.md, never tests or tools.
+    if (f.endsWith('.html') || ROOT_EXTRA.indexOf(f) >= 0 || /^[A-Z][A-Za-z]*\.md$/.test(f)) out.push({ abs: path.join(ROOT, f), rel: f });
   }
-  for (const d of ['css', 'js', 'assets']) {
+  for (const d of ['css', 'js', 'assets', 'deploy']) {
+    // deploy/ ships because deploy/gate-fallback.html and deploy/VERCEL.md are both needed by something
+    // that runs in a browser or is linked from a page; nothing else in it is public.
+
     const dir = path.join(ROOT, d);
     if (!fs.existsSync(dir)) continue;
     for (const e of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-      if (e.isFile() && !e.name.startsWith('.')) out.push({ abs: path.join(dir, e.name), rel: d + '/' + e.name });
+      const skip = (d === 'deploy' && !/\.(md|html)$/.test(e.name));
+      if (e.isFile() && !e.name.startsWith('.') && !skip) out.push({ abs: path.join(dir, e.name), rel: d + '/' + e.name });
     }
   }
   return out;

@@ -64,7 +64,7 @@ function cookies(req) {
 /* Free to the world: the front door, the catalogue, the guide, the paywall pages, styles, media. */
 /* Everything a locked visitor may see. `PROTECT` is checked first, so a file can never be both
    free and withheld; the bare `/` is the `(?:|$)` alternative, not an unanchored catch-all. */
-const PUBLIC = /^\/(?:(?:index|gate|buy|guide|platforms|platform)\.html|(?:css|assets|api|\.well-known)\/[^/]*(?:\/[^/]*)*|js\/(?:storage|access|app|platforms|mockups|crypto)\.js|robots\.txt|sitemap\.xml|favicon\.ico|(?:|$))$/;
+const PUBLIC = /^\/(?:(?:index|gate|buy|guide|platforms|platform)\.html|[A-Z][A-Za-z]*\.md|deploy\/[\w.-]+\.md|(?:css|assets|api|\.well-known)\/[^/]*(?:\/[^/]*)*|js\/(?:storage|access|app|platforms|mockups|crypto)\.js|robots\.txt|sitemap\.xml|favicon\.ico|(?:|$))$/;
 function isPublic(p) { return PUBLIC.test(p); }/* Behind the key: the graded corpus and the pages that render it. The *content* is the product,
    so the task data files are withheld too — locked requests get an empty stub instead. */
 const PROTECT = /^\/(?:task|queue|onboarding|detector|trust-safety|earnings)\.html$|^\/js\/(?:tasks|detector)\.js$|^\/data\//;

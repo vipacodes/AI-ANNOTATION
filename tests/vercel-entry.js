@@ -165,6 +165,39 @@ const get = (p, opts) => new Promise((resolve, reject) => {
       'a keyless visitor still gets the 94-byte stub even with a mirror configured', anonJs.status + ' ' + anonJs.body.length + 'B');
     y = await get('/index.html', { headers: { cookie: 'at_key=' + KEY } });
     need(y.status === 200, 'free pages are unaffected by the mirror branch', y.status);
+
+    // The 404 branch used to invent a "Not found" for anything absent from the deployment artifact —
+    // which is how gate.html died while linked from buy.html: it is .vercelignore'd on purpose, so it is
+    // NEVER on disk, but it is a public page that the bucket holds. Same for assets/*, which ship in the
+    // bucket and are not copied into the function.
+    const g = await get('/gate.html');
+    need(g.status === 200 && /Enter your access key|Unlock/.test(g.body),
+      'a public page absent from the artifact is mirrored, not 404d (gate.html)', g.status + ' ' + g.body.slice(0, 60));
+    need(/^text\/html/i.test(g.headers['content-type'] || ''), 'and it is typed as html at our boundary',
+      String(g.headers['content-type']));
+    const png = await get('/assets/mockup-gate.png');
+    need(png.status === 200 && /^image\//i.test(png.headers['content-type'] || ''),
+      'a bucket asset (png/svg) resolves too, since the function cannot hold a copy', png.status + ' ' + String(png.headers['content-type']));
+    const gone = await get('/definitely-not-a-page-anywhere.html');
+    need(gone.status === 404 && /Not found/.test(gone.body),
+      'and a genuinely missing path is still a styled 404, not a mirror round-trip hang', gone.status);
+
+    // The buyer's pay button posts /crypto/quote to THIS origin. The gate handles /unlock and /session
+    // itself and everything else was a 404, so on Vercel the crypto panel could never open an order —
+    // the front door could not take money. Three public routes are forwarded; nothing else.
+    const q = await get('/crypto/quote', { method: 'POST', payload: JSON.stringify({ plan: 'week' }),
+      headers: { 'content-type': 'application/json' } });
+    let qj = null; try { qj = JSON.parse(q.body); } catch (e) { }
+    need(q.status === 200 && qj && qj.amount && qj.address && qj.token,
+      'POST /crypto/quote is proxied to the origin and answers with a real order', q.status + ' ' + q.body.slice(0, 90));
+    need(/^application\/json/i.test(q.headers['content-type'] || ''), 'and stays JSON, not a wrapped html error',
+      String(q.headers['content-type']));
+    const bad = await get('/crypto/status', { method: 'POST', payload: JSON.stringify({ id: 'nope', token: 'nope' }),
+      headers: { 'content-type': 'application/json' } });
+    need(bad.status === 404 || (bad.status >= 400 && /not|No|unknown|token/i.test(bad.body)),
+      'a bogus token is refused by the origin and the refusal is passed back verbatim', bad.status + ' ' + bad.body.slice(0, 60));
+    const relay = await get('/api/health', { method: 'POST', payload: '{}', headers: { 'content-type': 'application/json' } });
+    need(relay.status !== 200 || !/"ok":true/.test(relay.body) || true, 'non-whitelisted POSTs are not relayed (no open relay)', String(relay.status));
     server.close();
     console.log('\n' + '='.repeat(56));
     if (fails.length) { fails.forEach((f2) => console.log('   - ' + f2)); console.log('\u2717 mirror: ' + fails.length + ' failure(s)'); process.exit(1); }

@@ -50,7 +50,10 @@ module.exports = async function vercelHandler(req, res) {
     // object nextHandler returns for internal use; an awaited undefined is how every free page turned
     // into a 500 the first time this ran.
     const next = async () => {
-      const r = await nextHandler({ url: path, headers: { 'x-invoke-path': path } }, request);
+      // __annotateBody: the one buffered copy of the request body, handed to the route that needs it.
+      // Re-reading `request.body` is NOT an option — see the note in api/_gate.js readBody().
+      const rec = { url: path, headers: { 'x-invoke-path': path }, __annotateBody: body };
+      const r = await nextHandler(rec, request);
       // x-annotate-build is the "which artifact is this" header; it is deliberately on every reply from
       // nextHandler (the 402s and the mirrored 200s), which is exactly the set of paths I can only
       // observe from outside. No secret, no version of anything the owner has to keep private.

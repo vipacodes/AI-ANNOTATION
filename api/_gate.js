@@ -38,7 +38,7 @@ globalThis.env = Object.assign({}, process.env);
    and "the gate is still answering from gate-fallback.html although the ordering fix is committed" was
    unanswerable without something inside the artifact that reports itself. Bump it with any change to the
    gate plumbing; tests and docs then have a string to assert on instead of a guess. */
-const GATE_BUILD = 'vercel-gate-2026-08-30.4';
+const GATE_BUILD = 'vercel-gate-2026-08-30.6';
 
 const ROOT = process.env.ANNOTATE_DEPLOY_ROOT || path.join(__dirname, '..');
 const FN = path.join(ROOT, 'deploy/cloudflare-pages-function.js');
@@ -109,6 +109,12 @@ const PREFIX = '/api/index';
 /** One GET to the gated origin for an asset this deployment refuses to carry. Any error is "no
  *  answer", not "serve nothing anyway": the caller falls back to the lock screen. */
 async function fromMirror(rel, srcReq) {
+  // Called with either an adapter-relative path or the absolute URL a browser really sent (the Cloudflare
+  // copy and local dev hand us 'http://127.0.0.1:4173/task.html'). Left alone, that became
+  // MIRROR_ORIGIN + 'http://…' → a 404 that presented itself as "the origin refused", which is exactly
+  // the diagnosis you do not want to chase on a paywall.
+  if (/^https?:/i.test(rel)) { try { rel = new URL(rel).pathname; } catch (e) { return null; } }
+  if (rel.charAt(0) !== '/') rel = '/' + rel;
   try {
     const h = { accept: '*/*' };
     const ck = srcReq && srcReq.headers && srcReq.headers.get && srcReq.headers.get('cookie');
@@ -204,6 +210,72 @@ const STUB_JS = {
 };
 
 /** The `next()` a Pages function expects: serve from disk, or the mirror, or 404 — never ungated. */
+/* The origin owns the crypto routes: it holds LTC_ADDRESS, the order table and the mint. Vercel has no
+   business deciding anything about a payment, so it forwards and echoes. Deliberately a named whitelist
+   rather than "any POST the gate did not claim": a blanket proxy turns the front door into an open relay in
+   front of the project URL, which is the one thing an adapter should never become. These three are the
+   public purchase endpoints — quote mints a one-time amount, status needs the 128-bit token this browser
+   was handed, claim is idempotent and single-use — and none of them returns a byte of protected content.
+   /crypto/check is NOT here: that is an operator readout, not a buyer route. */
+const PUBLIC_POST = { '/crypto/quote': 1, '/crypto/status': 1, '/crypto/claim': 1 };
+
+async function readBody(rec, srcReq) {
+  // nextHandler is handed TWO request shapes and either can be the one with a readable body: api/index.js
+  // calls it with the real Request (which Vercel's Node runtime lets you read once) and calls the gate
+  // module with a plain {url, headers} record, so `request.arrayBuffer` is not a function there. Reading
+  // the wrong one threw, was swallowed as "no body", and the origin answered a quote for an EMPTY order.
+  // srcReq FIRST: the gate module does `await request.json()` for its own routes, so on runtimes where a
+  // Request body is single-use the record's body may already be drained by the time we are asked for it.
+  const cands = [srcReq, rec].filter(Boolean);
+  // A buffered copy beats any stream, on every runtime. See api/index.js: the body is read ONCE off the
+  // node req for the gate, and that same buffer is what nextHandler is given, because after the gate
+  // module's own `await request.json()` the stream on `rec.body` reads as EMPTY (0 bytes, no throw) —
+  // which the origin reported back as "Unknown plan" for a perfectly good quote request.
+  for (const c of cands) {
+    if (c && Buffer.isBuffer(c.__annotateBody)) return c.__annotateBody;
+    if (c && c.__annotateBody && typeof c.__annotateBody.byteLength === 'number') return Buffer.from(c.__annotateBody);
+    if (typeof c.arrayBuffer === 'function') { try { const b = await c.arrayBuffer(); if (b && b.byteLength) return Buffer.from(b); } catch (e) { } }
+    else if (Buffer.isBuffer(c)) return c;
+    else if (c instanceof Uint8Array) return Buffer.from(c);
+    else if (typeof c === 'string') return Buffer.from(c);
+    if (c.body) { const r = await readBody(c.body, null); if (r && r.length) return r; }
+  }
+  return null;
+}
+
+async function headerOf(rec, srcReq, name) {
+  for (const c of [rec, srcReq].filter(Boolean)) {
+    if (!c) continue;
+    if (c.headers && typeof c.headers.get === 'function') { const v = c.headers.get(name); if (v) return v; }
+    if (c.headers && typeof c.headers === 'object' && c.headers[name]) return String(c.headers[name]);
+  }
+  return null;
+}
+
+async function proxyPublicPost(rel, request, srcReq) {
+  if (!MIRROR_ORIGIN) return null;
+  const rawBuf = await readBody(request, srcReq);
+  const hd = { get: function (n) { return headerOf(request, srcReq, n); } };
+  const h = { 'content-type': (hd.get('content-type') || 'application/json'), accept: 'application/json' };
+  const ck = hd.get('cookie'); if (ck) h.cookie = ck;   // irrelevant to these routes, forwarded because a
+  // body read is not a policy: whatever the visitor sent is what the origin should see, or a
+  // partially-stateful order becomes two different orders depending on which host answered.
+  try {
+    const res = await fetch(MIRROR_ORIGIN + rel, {
+      method: 'POST', headers: h, body: rawBuf === null ? '{}' : rawBuf, redirect: 'manual',
+      signal: AbortSignal.timeout ? AbortSignal.timeout(8000) : undefined
+    });
+    const buf = Buffer.from(await res.arrayBuffer());
+    const out = { status: res.status, body: buf, type: res.headers.get('content-type') || 'application/json', cache: 'no-store' };
+    // An empty or non-JSON answer from a proxy hop is a bug magnet; say so in the body the buyer sees.
+    if (!/json/i.test(out.type)) out.type = 'application/json';
+    return out;
+  } catch (e) {
+    storeErr('proxyPublicPost ' + rel + ': ' + String(e && e.message || e).slice(0, 80));
+    return { status: 502, body: Buffer.from(JSON.stringify({ error: 'Payment service unreachable. Your order is safe; try again in a moment.' })), type: 'application/json', cache: 'no-store' };
+  }
+}
+
 async function nextHandler(request, srcReq) {
   const p = originalPath(request);
   const search = String((request && request.url) || '').split('?')[1] || '';
@@ -212,6 +284,8 @@ async function nextHandler(request, srcReq) {
   if (abs !== ROOT && abs.indexOf(ROOT + path.sep) !== 0) return { status: 400, body: Buffer.from('bad path'), type: 'text/plain; charset=utf-8' };
   const cands = fs.existsSync(abs) ? [abs] : (/\.[a-z0-9]+$/i.test(abs) ? [] : [abs + '.html']);
   const file = cands.find((f) => fs.existsSync(f) && fs.statSync(f).isFile());
+  if (PUBLIC_POST[rel] && String(request.method || (srcReq && srcReq.method) || 'GET').toUpperCase() === 'POST')
+    return await proxyPublicPost(rel, request, srcReq);
   if (!file && PROTECTED.test(rel)) {
     // THIS is the actual paywall on Vercel, and it is deliberately not a rewrite.
     //
@@ -247,6 +321,14 @@ async function nextHandler(request, srcReq) {
     return { status: 402, body: gateScreen(rel), type: TYPES['.html'], cache: 'no-store', build: GATE_BUILD };
   }
   if (!file) {
+    // A path the deployment does not carry is not automatically absent: gate.html is .vercelignore'd (the
+    // paywall needs it off the static tree) and assets/* exist in the bucket, so 404'ing here broke a real
+    // "I have a key" link while looking like a correct not-found. Only for paths the gate does not protect,
+    // so this can never become a way to ask for a paid page and be served the origin's copy.
+    if (MIRROR_ORIGIN && !PROTECTED.test(rel)) {
+      const m = await fromMirror(rel, srcReq);
+      if (m) return m;
+    }
     const nf = path.join(ROOT, '404.html');
     return { status: 404, body: fs.existsSync(nf) ? fs.readFileSync(nf) : Buffer.from(EMBED_404), type: TYPES['.html'] };
   }
@@ -303,4 +385,4 @@ function makeFetch(baseOrigin) {
 const LOAD_ERRORS = [];
 function storeErr(m) { LOAD_ERRORS.push(m); }
 
-module.exports = { GATE_BUILD, EMBED_GATE, EMBED_404, EMBED_SCREEN, gateScreen, loadGate, originalPath, nextHandler, fromMirror, MIRROR_ORIGIN, makeFetch, TYPES, ROOT, PREFIX, LOAD_ERRORS };
+module.exports = { GATE_BUILD, PUBLIC_POST, proxyPublicPost, EMBED_GATE, EMBED_404, EMBED_SCREEN, gateScreen, loadGate, originalPath, nextHandler, fromMirror, MIRROR_ORIGIN, makeFetch, TYPES, ROOT, PREFIX, LOAD_ERRORS };
