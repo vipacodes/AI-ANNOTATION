@@ -56,6 +56,11 @@
       x.open('GET', BASE + 'session', true);
       x.withCredentials = true;
       x.timeout = 2500;
+      // All three gates take the key from `cookie` OR `x-access-key`, and the header is the half that works
+      // when a cookie cannot be sent: a file:// preview, a webview that dropped the scoped cookie, a test
+      // harness whose XHR has no cookie jar. A browser still sends the cookie as well — this only widens
+      // what a legitimate client can present; it never lets an unkeyed one read a protected byte.
+      try { x.setRequestHeader('x-access-key', k); } catch (e) { }
       x.onload = function () {
         if (x.status === 200) {
           try { var j = JSON.parse(x.responseText); A.set(k, j); return cb(true, { mode: 'server', claim: j }); }

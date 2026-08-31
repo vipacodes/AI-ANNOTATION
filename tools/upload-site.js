@@ -122,14 +122,24 @@ const md5 = (b) => crypto.createHash('md5').update(b).digest('hex');
 
   A.section('the privacy claim, measured');
   {
-    const gated = await project('/storage/v1/object/public/' + BUCKET + '/task.html');
-    A.ok('the PAID page is not readable through the public URL: HTTP ' + gated.status, gated.status >= 400);
+    const gated = await project('/storage/v1/object/public/' + BUCKET + '/task.html', { raw: true });
+    const gatedClone = await project('/storage/v1/object/public/' + BUCKET + '/p.html', { raw: true });
+    A.ok('the PAID pages (task.html and the clone page) are not readable through the public URL: HTTP ' + gated.status + ' / ' + gatedClone.status,
+      gated.status >= 400 && gatedClone.status >= 400);
     const free = await project('/storage/v1/object/public/' + BUCKET + '/index.html');
     A.ok('nor is the free one, and that is the point: the bucket is not a web root (HTTP ' + free.status + ')', free.status >= 400);
-    const auth = await project('/storage/v1/object/authenticated/' + BUCKET + '/task.html');
-    A.ok('with the service key the same bytes are readable (' + auth.body.length + ' bytes) — which is exactly one hop: the function',
-      auth.status === 200 && auth.body.length > 5000);
-    const noKey = await project('/storage/v1/object/authenticated/' + BUCKET + '/task.html', { headers: { authorization: '' } });
+    /* Byte-for-byte, never "longer than 5000". That threshold was a stand-in for "is this really my file",
+       and it broke the honest way the first time task.html became a 1608-byte shell over js/workspace.js:
+       a size assertion is not a read-back, and a page can get smaller for a good reason. */
+    const auth = await project('/storage/v1/object/authenticated/' + BUCKET + '/task.html', { raw: true });
+    const clone = await project('/storage/v1/object/authenticated/' + BUCKET + '/p.html', { raw: true });
+    const localTask = fs.readFileSync(path.join(ROOT, 'task.html'));
+    const localClone = fs.readFileSync(path.join(ROOT, 'p.html'));
+    A.ok('with the service key the same bytes are readable (task.html ' + auth.buffer.length + ' B, p.html ' + clone.buffer.length +
+      ' B) — which is exactly one hop: the function',
+      auth.status === 200 && !!auth.buffer && md5(auth.buffer) === md5(localTask) &&
+      clone.status === 200 && !!clone.buffer && md5(clone.buffer) === md5(localClone));
+    const noKey = await project('/storage/v1/object/authenticated/' + BUCKET + '/task.html', { headers: { authorization: '' }, raw: true });
     A.ok('and without it, no', noKey.status >= 400 || !/<!DOCTYPE/.test(noKey.body));
   }
   console.log('\n   next: node tools/verify-buyer-flow.js --mint   (that is the end-to-end proof)');
